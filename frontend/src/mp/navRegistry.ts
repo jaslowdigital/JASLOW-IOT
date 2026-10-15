@@ -38,6 +38,7 @@ export const MP_NAV: NavGroup[] = [
       { label: 'Locations', path: '/mp/locations', min: 'member', key: 'nav.locations', keywords: 'stores lots' },
       { label: 'Aged inventory', path: '/mp/aged', min: 'member', key: 'nav.aged', keywords: 'old days on lot price drop' },
       { label: 'New listing', path: '/mp/new', min: 'member', key: 'nav.new', keywords: 'add cart photo create' },
+      { label: 'Products', path: '/mp/products', min: 'member', key: 'nav.products', keywords: 'add product item parts accessories catalog sku stock photos' },
     ],
   },
   {

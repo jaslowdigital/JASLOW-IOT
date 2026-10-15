@@ -1,4 +1,5 @@
-// Jaslow Poster (IoT) — Facebook Marketplace vehicle form autofill (assistive).
+// Jaslow Poster (IoT) — Facebook Marketplace autofill (assistive): the vehicle form for golf carts,
+// the "Item for sale" form for general products.
 // Fills fields from the cart the user picked in the popup. NEVER clicks Post / Publish / Next.
 /* global chrome */
 (function () {
@@ -94,7 +95,7 @@
     const p = await readPending();
     if (!cartEl) return;
     cartEl.textContent = p && p.cart
-      ? `${[p.cart.year, p.cart.make, p.cart.model].filter(Boolean).join(" ") || "Golf Cart"} — $${Number(p.cart.price || 0).toLocaleString("en-US")}`
+      ? `${(p.cart.product && p.cart.product.name) || [p.cart.year, p.cart.make, p.cart.model].filter(Boolean).join(" ") || "Golf Cart"} — $${Number(p.cart.price || 0).toLocaleString("en-US")}`
       : "No cart selected — pick one in the Jaslow Poster popup.";
   }
 
@@ -330,6 +331,10 @@
       const { cart } = pending;
       const listing = pending.listing || {};
 
+      if (cart.product) {
+        await fillProduct(cart, listing);
+        return;
+      }
       await fillDropdown("Vehicle type", /^vehicle type\b/i, ["Other", "Powersport"], { optional: true });
       await sleep(600); // form re-renders after type change
       await fillDropdown("Year", /^year\b/i, String(cart.year || ""));
@@ -348,6 +353,30 @@
     } finally {
       fillBtn.disabled = false;
     }
+  }
+
+  const CONDITION_TEXT = {
+    new: ["New"],
+    used_like_new: ["Used - like new", "Used – like new", "Like new"],
+    used_good: ["Used - good", "Used – good", "Good"],
+    used_fair: ["Used - fair", "Used – fair", "Fair"],
+  };
+
+  /** "Item for sale" form (general products). */
+  async function fillProduct(cart, listing) {
+    const pr = cart.product || {};
+    if (!findControl(/^title\b/i)) status("Form", "open Marketplace → Create new listing → Item for sale", "warn");
+    await fillText("Title", /^title\b/i, listing.title1 || pr.name || "");
+    await fillText("Price", /^price\b/i, cart.price ? String(Math.round(cart.price)) : "");
+    if (pr.category) status("Category", `pick the closest Facebook category (yours: ${pr.category})`, "warn");
+    else status("Category", "pick a category", "warn");
+    await fillDropdown("Condition", /^condition\b/i, CONDITION_TEXT[pr.condition] || ["New"], { optional: true });
+    await fillText("Description", /^description\b/i, listing.description || "");
+    if (pr.brand) await fillText("Brand", /^brand\b/i, pr.brand, { optional: true });
+    const loc = cityState(cart.locationId);
+    if (loc) await fillText("Location", /^location\b/i, loc, { optional: true, onlyIfEmpty: true, pickSuggestion: true });
+    else status("Location", "left as is", "warn");
+    await uploadPhotos((cart.photos || []).map((p) => JaslowCartLogic.photoUrl(p)));
   }
 
   // ---------------------------------------------------------------------------

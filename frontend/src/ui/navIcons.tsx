@@ -14,6 +14,7 @@ const ICONS: Record<string, ReactNode> = {
   '/mp/locations': <Place />,
   '/mp/aged': <HourglassBottom />,
   '/mp/new': <AddAPhoto />,
+  '/mp/products': <Inventory2 />,
   '/mp/leads': <PersonSearch />,
   '/mp/customers': <People />,
   '/mp/texts': <Sms />,

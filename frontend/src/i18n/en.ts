@@ -22,6 +22,7 @@ const en = {
     browse: 'Browse',
     locations: 'Locations',
     new: 'New listing',
+    products: 'Products',
     finance: 'Financing',
     calculator: 'Calculator',
     post: 'Post & share',

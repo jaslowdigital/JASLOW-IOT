@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import { Alert, Box, Button, Chip, CircularProgress, Paper, Snackbar, Typography } from '@mui/material';
-import { ArrowBack, Call, CheckCircle, Directions, DirectionsCar, IosShare, Sms } from '@mui/icons-material';
+import { ArrowBack, Call, CheckCircle, Directions, DirectionsCar, Inventory2, IosShare, Sms } from '@mui/icons-material';
 import { DEALERSHIP_BY_ID } from '../mp/constants';
 import StorefrontHeader from './StorefrontHeader';
 import { fetchStorefrontCart, hoursLines, money, smsHref, telHref, type StorefrontCartResponse } from './api';
@@ -78,7 +78,7 @@ const StorefrontCartPage: React.FC = () => {
                 </>
               ) : (
                 <Box sx={{ aspectRatio: '4 / 3', bgcolor: 'grey.200', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'grey.500', borderRadius: 1 }}>
-                  <DirectionsCar sx={{ fontSize: 96 }} />
+                  {cart.isProduct ? <Inventory2 sx={{ fontSize: 96 }} /> : <DirectionsCar sx={{ fontSize: 96 }} />}
                 </Box>
               )}
               {(cart.videos || []).map((v) => (
@@ -94,7 +94,9 @@ const StorefrontCartPage: React.FC = () => {
               <Typography variant="h4" color="primary" fontWeight={900} sx={{ my: 1 }}>{money(cart.price)}</Typography>
               <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 2 }}>
                 <Chip size="small" label={cart.isUsed ? 'Used' : 'New'} color={cart.isUsed ? 'default' : 'secondary'} />
-                <Chip size="small" label={cart.isElectric ? 'Electric' : 'Gas'} variant="outlined" />
+                {cart.isProduct
+                  ? cart.category && <Chip size="small" label={cart.category} variant="outlined" />
+                  : <Chip size="small" label={cart.isElectric ? 'Electric' : 'Gas'} variant="outlined" />}
                 <Chip size="small" label={cart.location} variant="outlined" />
               </Box>
               <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 2 }}>

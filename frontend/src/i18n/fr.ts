@@ -21,6 +21,7 @@ const fr: Resource = {
     browse: 'Parcourir',
     locations: 'Magasins',
     new: 'Nouvelle annonce',
+    products: 'Produits',
     finance: 'Financement',
     calculator: 'Calculatrice',
     post: 'Publier et partager',

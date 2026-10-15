@@ -21,6 +21,7 @@ const es: Resource = {
     browse: 'Explorar',
     locations: 'Tiendas',
     new: 'Nuevo anuncio',
+    products: 'Productos',
     finance: 'Financiamiento',
     calculator: 'Calculadora',
     post: 'Publicar y compartir',

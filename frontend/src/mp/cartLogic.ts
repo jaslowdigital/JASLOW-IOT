@@ -2,7 +2,7 @@
 // Also bundled into the Chrome extensions (see `npm run build:mp-ext`), so keep it
 // free of React / Firebase imports.
 
-import type { Cart, Listing, ListingFormat } from './types';
+import type { Cart, Listing, ListingFormat, ProductCondition, ProductInfo } from './types';
 import { PHOTO_BASE, PHOTO_WORKER, WINDOW_STICKER_BASE, locationCity, locationName } from './constants';
 
 export { locationName, locationCity };
@@ -185,8 +185,62 @@ export function mapDmsCartObject(doc: Json): Cart {
     photoSource: source,
     inStock: doc.isInStock !== false,
     windowSticker: windowStickerUrl(doc),
-    flaggedDelete: hasDeleteFlag(doc),
+    flaggedDelete: doc._mpKind === 'product' ? false : hasDeleteFlag(doc),
+    ...(doc._mpKind === 'product' ? { product: productInfo(doc) } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// General products (Products section): stored in mp_carts like carts, with `_mpKind: 'product'`.
+// ---------------------------------------------------------------------------
+
+export const PRODUCT_CONDITIONS: Array<{ value: ProductCondition; label: string }> = [
+  { value: 'new', label: 'New' },
+  { value: 'used_like_new', label: 'Used - like new' },
+  { value: 'used_good', label: 'Used - good' },
+  { value: 'used_fair', label: 'Used - fair' },
+];
+
+export const conditionLabel = (c: ProductCondition | string) =>
+  PRODUCT_CONDITIONS.find((x) => x.value === c)?.label || 'New';
+
+/** Product details from a raw payload (tolerant of missing fields). */
+export function productInfo(doc: Json): ProductInfo {
+  const p = obj(doc._mpProduct);
+  const cond = str(p.condition) as ProductCondition;
+  const qty = p.quantity === null || p.quantity === undefined || p.quantity === '' ? null : Number(p.quantity);
+  return {
+    name: str(p.name) || str(obj(doc.cartType).model),
+    category: str(p.category),
+    brand: str(p.brand) || str(obj(doc.cartType).make),
+    sku: str(p.sku) || str(doc.serialNo),
+    quantity: qty === null || !Number.isFinite(qty) ? null : Math.max(0, Math.round(qty)),
+    cost: Number(p.cost) || 0,
+    condition: PRODUCT_CONDITIONS.some((x) => x.value === cond) ? cond : 'new',
+    description: str(doc._mpDescription),
+    specs: (Array.isArray(p.specs) ? p.specs : [])
+      .map((x) => ({ label: str(obj(x).label), value: str(obj(x).value) }))
+      .filter((x) => x.label && x.value),
+  };
+}
+
+/** Marketplace listing for a product: the product's own name and description (no golf-cart wording). */
+function productListing(cart: Cart, rng: () => number): Listing {
+  const pr = cart.product!;
+  const title = pr.name || [pr.brand, pr.category].filter(Boolean).join(' ') || 'Item';
+  const lines: string[] = [];
+  if (pr.description) lines.push(pr.description);
+  const facts = [
+    pr.brand && !title.toLowerCase().includes(pr.brand.toLowerCase()) ? `Brand: ${pr.brand}` : '',
+    `Condition: ${conditionLabel(pr.condition)}`,
+    ...pr.specs.map((s) => `${s.label}: ${s.value}`),
+  ].filter(Boolean);
+  if (facts.length) lines.push(facts.join('\n'));
+  const p = priceText(cart.price);
+  if (p) lines.push(pick(rng, [`Asking ${p}.`, `Price is ${p}.`, `${p}.`]));
+  const loc = locationName(cart.locationId);
+  if (/,/.test(loc)) lines.push(loc);
+  return { title1: title, title2: [pr.brand, pr.name].filter(Boolean).join(' ') || title, description: lines.join('\n\n'), format: 'list' };
 }
 
 // ---------------------------------------------------------------------------
@@ -284,11 +338,13 @@ export function displayModel(cart: Cart): string {
 }
 
 export function cartName(cart: Cart): string {
+  if (cart.product) return cart.product.name || 'Item';
   return [cart.year, displayMake(cart), displayModel(cart)].filter(Boolean).join(' ') || 'Golf Cart';
 }
 
 /** Website-style name: Make + Model + Cart Color + Location. */
 export function cartTitle(cart: Cart): string {
+  if (cart.product) return cart.product.name || 'Item';
   return [displayMake(cart), displayModel(cart), cart.color, locationCity(cart.locationId)].filter(Boolean).join(' ') || cartName(cart);
 }
 
@@ -501,6 +557,7 @@ export interface ListingOptions {
 export function generateListing(cart: Cart, opts: ListingOptions = {}): Listing {
   const seed = (opts.seed ?? hashString(cart.id)) + (opts.variant ?? 0) * 7919;
   const rng = seededRandom(seed);
+  if (cart.product) return productListing(cart, rng);
   const format: ListingFormat = opts.format ?? (rng() < 0.5 ? 'list' : 'paragraph');
   const [title1, title2] = buildTitles(cart, rng);
 
@@ -530,6 +587,6 @@ export function generateVariations(cart: Cart, userId = ''): Listing[] {
     : ['list', 'list', 'list', 'paragraph', 'paragraph'];
   const list = shuffle(rng, formats).map((format, i) => generateListing(cart, { seed, variant: i + 1, format }));
   // Variation 1 is what Quick FB List posts: always the most specific search phrase.
-  if (list[0]) list[0] = { ...list[0], title1: searchTitles(cart)[0] };
+  if (list[0] && !cart.product) list[0] = { ...list[0], title1: searchTitles(cart)[0] };
   return list;
 }

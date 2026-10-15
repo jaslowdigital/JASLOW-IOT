@@ -69,6 +69,29 @@ export interface MpAccount {
 }
 
 /** Clean cart mapped from raw DMS JSON. */
+/** Condition values, matching Facebook Marketplace's item conditions. */
+export type ProductCondition = 'new' | 'used_like_new' | 'used_good' | 'used_fair';
+
+export interface ProductSpec {
+  label: string;
+  value: string;
+}
+
+/** Extra details for a general product (anything that isn't a golf cart), added under Products. */
+export interface ProductInfo {
+  name: string;
+  category: string;
+  brand: string;
+  sku: string;
+  /** null = not tracked. */
+  quantity: number | null;
+  /** Internal cost (never shown publicly). */
+  cost: number;
+  condition: ProductCondition;
+  description: string;
+  specs: ProductSpec[];
+}
+
 export interface Cart {
   id: string;
   dmsId: string;
@@ -110,6 +133,8 @@ export interface Cart {
   /** Monroney window sticker URL, when DMS has one. */
   windowSticker: string;
   flaggedDelete: boolean;
+  /** Set for general products (Products section); undefined for golf carts. */
+  product?: ProductInfo;
 }
 
 /** A cart as held in the app: mapped cart + tracking metadata. */

@@ -106,9 +106,12 @@ Keep the keystore and password somewhere safe (password manager). Losing it mean
 
 ## 7. Chrome extension (Jaslow Poster)
 
-Before packaging/loading, edit `mp-assistant/shared/jaslow-auth.js` **and** `mp-assistant/poster/jaslow-auth.js`:
-`API_KEY` (your new Firebase web API key) and `PROJECT_ID`. If you use photos, also set `PHOTO_BASE`,
-`WINDOW_STICKER_BASE` and `PHOTO_WORKER` at the top of both `cart-logic.js` files.
+The zip on the app's Download page is built by the deploy workflow, which bakes in your Firebase web key, project id
+and photo settings from the GitHub variables — nothing to edit.
+
+Only when loading the extension unpacked straight from the repo: set `API_KEY` and `PROJECT_ID` in
+`mp-assistant/poster/jaslow-auth.js`, and run `cd frontend && npm run build:mp-ext` (with `frontend/.env` filled in)
+to regenerate `cart-logic.js` with your photo settings.
 
 ## 8. Your stores
 

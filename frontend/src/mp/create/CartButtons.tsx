@@ -48,8 +48,8 @@ export default function CreateCartButtons({ cart }: { cart: MpCart }) {
         Photo studio
       </Button>
       {canEdit && (
-        <Button variant="outlined" startIcon={<Edit />} onClick={() => navigate(`/mp/new?edit=${encodeURIComponent(cart.docId)}`)}>
-          Edit listing
+        <Button variant="outlined" startIcon={<Edit />} onClick={() => navigate(cart.product ? `/mp/products/${encodeURIComponent(cart.docId)}` : `/mp/new?edit=${encodeURIComponent(cart.docId)}`)}>
+          {cart.product ? 'Edit product' : 'Edit listing'}
         </Button>
       )}
       {open && (

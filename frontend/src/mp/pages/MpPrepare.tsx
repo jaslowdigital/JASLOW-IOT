@@ -17,7 +17,7 @@ import { posterVersion } from '../posterBridge';
 import { quickFbList, quickListMode } from '../quickList';
 import { rememberPostingAccount, useAutoMarkPosted } from '../useAutoMarkPosted';
 import { isNativeApp } from '../../native/platform';
-import { COLLECTIONS, MARKETPLACE_CREATE_URL } from '../constants';
+import { COLLECTIONS, MARKETPLACE_CREATE_URL, marketplaceCreateUrl } from '../constants';
 import { saveAllPhotos } from '../photos';
 import { isOpenStatus, QUEUE_STATUS_COLOR, QUEUE_STATUS_LABEL, setQueueStatus } from '../queue';
 import type { QueueItem } from '../types';
@@ -160,7 +160,7 @@ const MpPrepare: React.FC = () => {
     logEvent(uid, 'listing_prepared', ev);
     logEvent(uid, 'marketplace_opened', ev);
     flash('Description copied — paste it into Facebook.');
-    await openExternal(MARKETPLACE_CREATE_URL);
+    await openExternal(cart ? marketplaceCreateUrl(cart) : MARKETPLACE_CREATE_URL);
   };
 
   const copy = async (label: string, text: string) => {

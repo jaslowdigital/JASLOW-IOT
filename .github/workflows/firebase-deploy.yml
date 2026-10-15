@@ -181,6 +181,17 @@ jobs:
         run: |
           STAGE="$RUNNER_TEMP/jaslow-poster"
           rm -rf "$STAGE" && cp -r mp-assistant/poster "$STAGE" && rm -f "$STAGE/README.md"
+          # Bake this deployment's settings in: photo host/worker into cart-logic.js (same VITE_* values as the
+          # website) and the Firebase web key + project into jaslow-auth.js.
+          (cd frontend && node scripts/build-mp-ext.mjs "$STAGE/cart-logic.js")
+          node -e '
+            const fs = require("fs"); const f = process.argv[1];
+            let s = fs.readFileSync(f, "utf8");
+            const key = process.env.VITE_FIREBASE_API_KEY || "", proj = process.env.FIREBASE_PROJECT_ID || "";
+            if (key) s = s.replace(/var API_KEY = "[^"]*";/, "var API_KEY = " + JSON.stringify(key) + ";");
+            if (proj) s = s.replace(/var PROJECT_ID = "[^"]*";/, "var PROJECT_ID = " + JSON.stringify(proj) + ";");
+            fs.writeFileSync(f, s);
+          ' "$STAGE/jaslow-auth.js"
           # Production zip: drop the http://localhost match (developer testing only).
           node -e '
             const fs = require("fs"); const f = process.argv[1];

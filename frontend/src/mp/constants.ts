@@ -64,6 +64,10 @@ export const ROLE_OPTIONS: Array<{ value: string; label: string }> = [
 ];
 
 export const MARKETPLACE_CREATE_URL = 'https://www.facebook.com/marketplace/create/vehicle';
+/** Marketplace "Item for sale" form, used for general products. */
+export const MARKETPLACE_ITEM_URL = 'https://www.facebook.com/marketplace/create/item';
+/** The Marketplace form for this listing: the vehicle form for golf carts, the item form for products. */
+export const marketplaceCreateUrl = (cart: { product?: unknown }) => (cart.product ? MARKETPLACE_ITEM_URL : MARKETPLACE_CREATE_URL);
 
 export const LOCATION_ORDER = ['T0', 'Other'];
 

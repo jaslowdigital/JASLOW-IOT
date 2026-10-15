@@ -10,6 +10,8 @@ Web app, Android/iOS app and Chrome extension for dealership teams — served at
 
 - **IoT dashboard** — store phones forward their notifications (Facebook, Messenger, missed calls) to one dashboard.
 - **MP Assistant** — posting DMS cart inventory to Facebook Marketplace, leads/CRM, team goals.
+- **Products** — add any product one by one (name, category, brand, SKU, price, cost, quantity, condition, description,
+  custom fields, photos). Listed products show in inventory, on the storefront and post to Marketplace's "Item for sale" form.
 - **Sell more** — speed-to-lead, texting, quotes, booking, reviews, referrals.
 - **Webhook Flows** — website form submissions → leads, email, Google Sheets.
 

@@ -6,6 +6,9 @@
   const $ = (id) => document.getElementById(id);
   const PENDING_KEY = "jaslowPosterPending";
   const FB_CREATE_URL = "https://www.facebook.com/marketplace/create/vehicle";
+  // General products (Products section) use the "Item for sale" form.
+  const FB_ITEM_URL = "https://www.facebook.com/marketplace/create/item";
+  const fbUrlFor = (c) => (c && c.product ? FB_ITEM_URL : FB_CREATE_URL);
   const locName = (id) => JaslowCartLogic.locationName(id);
 
   let session = null;
@@ -96,7 +99,8 @@
 
   function matches(cart, q) {
     if (!q) return true;
-    const hay = [cart.make, cart.model, cart.year, cart.serial, cart.vin, cart.locationId, locName(cart.locationId), cart.color, cart.seatColor]
+    const pr = cart.product || {};
+    const hay = [cart.make, cart.model, cart.year, cart.serial, cart.vin, cart.locationId, locName(cart.locationId), cart.color, cart.seatColor, pr.name, pr.category, pr.brand, pr.sku]
       .join(" ")
       .toLowerCase();
     return q.split(/\s+/).every((t) => hay.includes(t));
@@ -105,7 +109,7 @@
   function renderList() {
     const q = $("search").value.trim().toLowerCase();
     const list = carts.filter((c) => matches(c, q));
-    $("list-count").textContent = `${list.length} of ${carts.length} carts`;
+    $("list-count").textContent = `${list.length} of ${carts.length} items`;
     const uid = session ? session.uid : "";
     const host = $("list");
     host.innerHTML = "";
@@ -145,7 +149,18 @@
   function openCart(cart) {
     current = cart;
     $("d-name").textContent = JaslowCartLogic.cartTitle(cart);
-    const rows = [
+    const pr = cart.product;
+    const rows = pr ? [
+      ["Price", money(cart.price)],
+      ["Category", pr.category],
+      ["Brand", pr.brand],
+      ["SKU", pr.sku],
+      ["Condition", ({ new: "New", used_like_new: "Used - like new", used_good: "Used - good", used_fair: "Used - fair" })[pr.condition] || "New"],
+      ["In stock", pr.quantity === null ? "" : pr.quantity],
+      ["Location", `${cart.locationId} — ${locName(cart.locationId)}`],
+      ["Photos", cart.photos.length],
+      ["Posted on", Object.keys(cart.postedAccounts || {}).length ? Object.keys(cart.postedAccounts).length + " account(s)" : ""],
+    ] : [
       ["Price", money(cart.price)],
       ["Location", `${cart.locationId} — ${locName(cart.locationId)}`],
       ["Condition", cart.isUsed ? "Used" : "New"],
@@ -204,7 +219,7 @@
     }
   });
 
-  $("btn-open-fb").addEventListener("click", () => chrome.tabs.create({ url: FB_CREATE_URL }));
+  $("btn-open-fb").addEventListener("click", () => chrome.tabs.create({ url: fbUrlFor(current) }));
 
   // ---------------------------------------------------------------------------
   // Init

@@ -81,6 +81,9 @@ export interface PublicCart {
   allTerrain: boolean;
   /** True when `photos` are stock images for the model, not photos of this cart. */
   stockPhotos: boolean;
+  /** General product (Products section), not a golf cart. */
+  isProduct?: boolean;
+  category?: string;
 }
 
 /** DMS fill-ins that aren't a real make/model ("Other", "N/A", ...). Same rule as frontend cartLogic.isPlaceholder. */
@@ -152,7 +155,8 @@ export function publicCart(id: string, data: Json): PublicCart | null {
   if (data.doNotPost) return null;
   const p = parsePayload(data);
   if (p.isInStock === false || str(p.status).toLowerCase() === 'sold' || bool(p.isDraft)) return null;
-  if (/delete/i.test(str(data.payload))) return null;
+  // DMS "delete" flags (not for products, whose free-text description may contain the word).
+  if (p._mpKind !== 'product' && /delete/i.test(str(data.payload))) return null;
   const type = obj(p.cartType);
   const attrs = obj(p.cartAttributes);
   const batt = obj(p.battery);
@@ -166,6 +170,7 @@ export function publicCart(id: string, data: Json): PublicCart | null {
   // Stock web images for the model/color, only when the cart doesn't have enough photos of its own.
   const stockPhotos = photos.length < MIN_PHOTOS && cleanList(p._mpDefaultImages).length >= MIN_PHOTOS;
   if (stockPhotos) photos = cleanList(p._mpDefaultImages);
+  if (p._mpKind === 'product') return publicProduct(id, data, p, photos, locationId, isUsed);
   const passengers = parseInt(str(attrs.passengers).match(/\d+/)?.[0] || '0', 10);
   const lifted = bool(attrs.isLifted);
   const streetLegal = bool(obj(p.title).isStreetLegal);
@@ -198,6 +203,49 @@ export function publicCart(id: string, data: Json): PublicCart | null {
     utility: str(p._mpCategory) === 'utility' || /\b(utility|utv|hauler|cargo)\b/i.test(`${make} ${model}`),
     stockPhotos,
     allTerrain: /all[\s-]?terrain|off[\s-]?road|\bA\/?T\b/i.test(str(attrs.tireType)),
+  };
+}
+
+const CONDITION_LABELS: Record<string, string> = {
+  new: 'New', used_like_new: 'Used - like new', used_good: 'Used - good', used_fair: 'Used - fair',
+};
+
+/** A general product (Products section) for the storefront. Internal fields (cost, quantity) are not exposed. */
+function publicProduct(id: string, data: Json, p: Json, photos: string[], locationId: string, isUsed: boolean): PublicCart {
+  const pr = obj(p._mpProduct);
+  const name = str(pr.name) || str(obj(p.cartType).model) || 'Item';
+  const brand = str(pr.brand);
+  const specs = (Array.isArray(pr.specs) ? pr.specs : [])
+    .map((x) => ({label: str(obj(x).label), value: str(obj(x).value)}))
+    .filter((x) => x.label && x.value);
+  const features = [
+    CONDITION_LABELS[str(pr.condition)] || (isUsed ? 'Used' : 'New'),
+    brand ? `Brand: ${brand}` : '',
+    str(pr.sku) ? `SKU: ${str(pr.sku)}` : '',
+    ...specs.map((x) => `${x.label}: ${x.value}`),
+  ].filter(Boolean);
+  return {
+    id,
+    title: name,
+    year: '', make: brand, model: name, color: str(obj(p.cartAttributes).cartColor),
+    price: Number(p.retailPrice) || 0,
+    isUsed,
+    isElectric: false,
+    passengers: 0,
+    lifted: false,
+    streetLegal: false,
+    battery: '',
+    locationId,
+    location: locName(locationId),
+    photos: photos.map(photoUrl),
+    features,
+    description: str(p._mpDescription) || `${name}${brand ? ` by ${brand}` : ''}.`,
+    videos: cleanList(data.videos).filter((u) => /^https:\/\//i.test(u)),
+    utility: false,
+    stockPhotos: false,
+    allTerrain: false,
+    isProduct: true,
+    category: str(pr.category),
   };
 }
 

@@ -4,6 +4,7 @@ import { SignedInSuspense } from '../ui/PageSuspense';
 import ProfilesRedirect from './pages/ProfilesRedirect';
 import FinanceRedirect from './pages/FinanceRedirect';
 import { ROUTES as CREATE_ROUTES } from './create/routes';
+import { ROUTES as PRODUCT_ROUTES } from './products/routes';
 import { ROUTES as SHARE_ROUTES, PUBLIC_ROUTES } from './share/routes';
 import { ROUTES as CRM_ROUTES } from './crm/routes';
 import { ROUTES as TEAM_ROUTES } from './team/routes';
@@ -48,7 +49,7 @@ export const MP_ROUTES: Array<{ path: string; element: ReactNode }> = [
   { path: '/mp/prepare/:cartId', element: page(<MpPrepare />) },
 ];
 
-const AREA_ROUTES = [...CREATE_ROUTES, ...SHARE_ROUTES, ...CRM_ROUTES, ...TEAM_ROUTES, ...HELP_ROUTES, ...WH_ROUTES, ...SALES_ROUTES, ...INSIGHTS_ROUTES];
+const AREA_ROUTES = [...CREATE_ROUTES, ...PRODUCT_ROUTES, ...SHARE_ROUTES, ...CRM_ROUTES, ...TEAM_ROUTES, ...HELP_ROUTES, ...WH_ROUTES, ...SALES_ROUTES, ...INSIGHTS_ROUTES];
 
 export function mpRoutes(guard: (el: React.ReactNode) => React.ReactNode) {
   return [...MP_ROUTES, ...AREA_ROUTES].map((r) => <Route key={r.path} path={r.path} element={guard(r.element)} />);

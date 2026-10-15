@@ -27,6 +27,9 @@ export interface PublicCart {
   utility?: boolean;
   allTerrain?: boolean;
   stockPhotos?: boolean;
+  /** General product (Products section), not a golf cart. */
+  isProduct?: boolean;
+  category?: string;
 }
 
 export type WeekDay = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';

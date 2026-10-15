@@ -11,12 +11,14 @@ import { fetchStorefront, hoursLines, money, photoRank, storefrontCartPath, telH
 type Sort = 'featured' | 'price-asc' | 'price-desc';
 
 /** Filter chips: within a group any selected chip matches (New or Used); across groups all must match. */
-type FilterKey = 'new' | 'used' | 'electric' | 'gas' | 'lifted' | 'allTerrain' | 'utility';
+type FilterKey = 'new' | 'used' | 'electric' | 'gas' | 'lifted' | 'allTerrain' | 'utility' | 'carts' | 'products';
 const FILTERS: Array<{ key: FilterKey; label: string; group: string; test: (c: PublicCart) => boolean }> = [
   { key: 'new', label: 'Brand new', group: 'cond', test: (c) => !c.isUsed },
   { key: 'used', label: 'Used', group: 'cond', test: (c) => c.isUsed },
-  { key: 'electric', label: 'Electric', group: 'power', test: (c) => c.isElectric },
-  { key: 'gas', label: 'Gas', group: 'power', test: (c) => !c.isElectric },
+  { key: 'carts', label: 'Golf carts', group: 'kind', test: (c) => !c.isProduct },
+  { key: 'products', label: 'Parts & products', group: 'kind', test: (c) => !!c.isProduct },
+  { key: 'electric', label: 'Electric', group: 'power', test: (c) => !c.isProduct && c.isElectric },
+  { key: 'gas', label: 'Gas', group: 'power', test: (c) => !c.isProduct && !c.isElectric },
   { key: 'lifted', label: 'Lifted', group: 'lifted', test: (c) => c.lifted },
   { key: 'allTerrain', label: 'All terrain', group: 'allTerrain', test: (c) => !!c.allTerrain },
   { key: 'utility', label: 'Utility', group: 'utility', test: (c) => !!c.utility },
@@ -39,7 +41,7 @@ function loadBroken(): Set<string> {
 const searchText = (c: PublicCart) => [
   c.year, c.title, c.make, c.model, c.color, c.location, c.battery, ...c.features,
   c.passengers ? `${c.passengers} passenger ${c.passengers} seater ${c.passengers} seats` : '',
-  c.isUsed ? 'used pre-owned' : 'new brand new', c.isElectric ? 'electric' : 'gas gasoline',
+  c.isUsed ? 'used pre-owned' : 'new brand new', c.isProduct ? `product part accessory ${c.category || ''}` : c.isElectric ? 'electric' : 'gas gasoline',
   c.lifted ? 'lifted lift kit' : '', c.streetLegal ? 'street legal lsv' : '', c.utility ? 'utility' : '', c.allTerrain ? 'all terrain off road' : '',
 ].join(' ').toLowerCase().replace(/"/g, ' inch ');
 
@@ -126,7 +128,11 @@ const StorefrontPage: React.FC = () => {
   }, [atLoc, q, filters, sort]);
 
   // Only offer chips that match at least one cart here.
-  const chips = useMemo(() => FILTERS.filter((f) => atLoc.some(f.test)), [atLoc]);
+  const chips = useMemo(() => {
+    // "Golf carts" / "Parts & products" only when the store has both.
+    const mixed = atLoc.some((c) => c.isProduct) && atLoc.some((c) => !c.isProduct);
+    return FILTERS.filter((f) => atLoc.some(f.test) && (f.group !== 'kind' || mixed));
+  }, [atLoc]);
 
   const sf = data?.storefront || null;
 
@@ -280,7 +286,9 @@ const PublicCartCard: React.FC<{ cart: PublicCart; slug: string; onBroken: (url:
           <Typography variant="body2" color="text.secondary">{cart.location}</Typography>
           <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1 }}>
             <Chip size="small" label={cart.isUsed ? 'Used' : 'New'} color={cart.isUsed ? 'default' : 'secondary'} />
-            <Chip size="small" label={cart.isElectric ? 'Electric' : 'Gas'} variant="outlined" />
+            {cart.isProduct
+              ? cart.category && <Chip size="small" label={cart.category} variant="outlined" />
+              : <Chip size="small" label={cart.isElectric ? 'Electric' : 'Gas'} variant="outlined" />}
             {cart.passengers > 0 && <Chip size="small" label={`${cart.passengers} seats`} variant="outlined" />}
             {cart.lifted && <Chip size="small" label="Lifted" variant="outlined" />}
             {cart.streetLegal && <Chip size="small" label="Street legal" variant="outlined" />}

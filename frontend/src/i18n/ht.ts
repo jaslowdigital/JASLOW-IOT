@@ -22,6 +22,7 @@ const ht: Resource = {
     browse: 'Gade tout',
     locations: 'Magazen yo',
     new: 'Nouvo anons',
+    products: 'Pwodwi',
     finance: 'Finansman',
     calculator: 'Kalkilatris',
     post: 'Pibliye ak pataje',

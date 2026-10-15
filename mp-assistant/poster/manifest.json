@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Jaslow Poster (IoT)",
   "short_name": "Jaslow Poster",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Fills the Facebook Marketplace vehicle form and lenders' credit applications from JASLOW IOT. Never posts or submits.",
   "permissions": [
     "storage"

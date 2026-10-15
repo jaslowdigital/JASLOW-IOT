@@ -12,7 +12,7 @@ import AutoPostDialog from '../components/AutoPostDialog';
 import AiListingPanel from '../components/AiListingPanel';
 import CartExtensions from '../components/CartExtensions';
 import { useMp } from '../MpDataContext';
-import { cartName, cartTitle } from '../cartLogic';
+import { cartName, cartTitle, conditionLabel } from '../cartLogic';
 import { formatPrice, hasPhotoIssue, postedTs, timeAgo, workingPhotos } from '../cartUtils';
 import { locationName } from '../constants';
 import { savePhoto, saveAllPhotos } from '../photos';
@@ -74,7 +74,18 @@ const MpCartDetail: React.FC = () => {
     }
   };
 
-  const rows: Array<[string, string]> = [
+  const pr = cart.product;
+  const rows: Array<[string, string]> = pr ? [
+    ['Price', formatPrice(cart.price)],
+    ['Category', pr.category || '—'],
+    ['Brand', pr.brand || '—'],
+    ['SKU', pr.sku || '—'],
+    ['Condition', conditionLabel(pr.condition)],
+    ['In stock', pr.quantity === null ? 'Not tracked' : String(pr.quantity)],
+    ['Location', `${cart.locationId} · ${locationName(cart.locationId)}`],
+    ...(cart.color ? [['Color', cart.color] as [string, string]] : []),
+    ...pr.specs.map((x) => [x.label, x.value] as [string, string]),
+  ] : [
     ['Price', formatPrice(cart.price)],
     ['Condition', cart.isUsed ? 'Used' : 'New'],
     ['Location', `${cart.locationId} · ${locationName(cart.locationId)}`],

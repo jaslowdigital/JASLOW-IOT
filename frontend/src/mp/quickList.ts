@@ -4,7 +4,7 @@
 //   Otherwise    → assisted: description copied, Facebook opened (photos via "Save all photos").
 import { registerPlugin } from '@capacitor/core';
 import { displayMake, displayModel, generateVariations, photoUrl } from './cartLogic';
-import { MARKETPLACE_CREATE_URL, locationName } from './constants';
+import { locationName, marketplaceCreateUrl } from './constants';
 import { posterVersion, sendToPoster } from './posterBridge';
 import { isNativeApp, nativePlatform } from '../native/platform';
 import { copyText, openExternal } from '../native/actions';
@@ -24,7 +24,8 @@ export function quickListMode(): QuickListMode {
 export async function quickFbList(cart: MpCart, photos: string[], userKey: string, variation = 0): Promise<string> {
   const listing = generateVariations(cart, userKey)[variation] || generateVariations(cart, userKey)[0];
   const mode = quickListMode();
-  if (mode === 'in-app') {
+  // The in-app Facebook filler only knows the vehicle form: products use the assisted flow there.
+  if (mode === 'in-app' && !cart.product) {
     const payload = JSON.stringify({
       cart: {
         year: cart.year, make: displayMake(cart), model: displayModel(cart), price: cart.price, cityState: locationName(cart.locationId),
@@ -37,7 +38,7 @@ export async function quickFbList(cart: MpCart, photos: string[], userKey: strin
   }
   if (mode === 'extension') {
     sendToPoster(cart, photos, listing);
-    window.open(MARKETPLACE_CREATE_URL, '_blank', 'noopener');
+    window.open(marketplaceCreateUrl(cart), '_blank', 'noopener');
     return 'Facebook is opening — Jaslow Poster fills in the form and uploads the photos. Check it, then click Publish.';
   }
   return openFacebookAssisted(cart, userKey, variation);
@@ -47,6 +48,6 @@ export async function quickFbList(cart: MpCart, photos: string[], userKey: strin
 export async function openFacebookAssisted(cart: MpCart, userKey: string, variation = 0): Promise<string> {
   const listing = generateVariations(cart, userKey)[variation] || generateVariations(cart, userKey)[0];
   await copyText(listing.description);
-  await openExternal(MARKETPLACE_CREATE_URL);
+  await openExternal(marketplaceCreateUrl(cart));
   return 'Description copied — paste it into Facebook. Use "Save all photos" to add the pictures.';
 }
