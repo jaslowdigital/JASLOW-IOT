@@ -1,0 +1,153 @@
+// Notification echo: Android phones running the JASLOW IOT app forward the notifications they receive
+// (Facebook, Messenger, …) to the dashboard, labeled with the phone's team number (#0003).
+//   mpEchoRegister : callable — the signed-in phone gets a per-device echo secret (stored hashed on the device doc)
+//   mpEcho         : HTTP (Hosting /api/echo) — the phone's native notification listener posts here, even while the
+//                    app is closed; creates a `notifications` doc for the phone's owner (dashboard + push to masters)
+import * as logger from 'firebase-functions/logger';
+import {HttpsError, onCall, onRequest} from 'firebase-functions/v2/https';
+import * as admin from 'firebase-admin';
+import {FieldValue} from 'firebase-admin/firestore';
+import {createHash, randomBytes, timingSafeEqual} from 'crypto';
+import {isFacebookMessage} from './fbFilter';
+import {markOnline} from './presence';
+import {echoAfterSave, echoBeforeFilter} from './sales/echoHooks';
+import {pendingSmsFor, recordSmsResults} from './sales/texting';
+import {expireIn, notificationExpireAt} from './sales/util';
+
+const db = () => admin.firestore();
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+const MAX_PER_MINUTE = 60;
+
+/** Phone app (signed in): returns this phone's echo credentials. A new secret replaces the old one. */
+export const mpEchoRegister = onCall(async (req) => {
+  if (!req.auth) throw new HttpsError('unauthenticated', 'Sign in first');
+  const deviceId = String(req.data?.deviceId || '');
+  if (!/^app_[A-Za-z0-9-]{8,64}_[A-Za-z0-9]{1,128}$/.test(deviceId)) throw new HttpsError('invalid-argument', 'Bad device id');
+  const ref = db().collection('devices').doc(deviceId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError('not-found', 'This phone is not set up yet');
+  if (snap.get('userId') !== req.auth.uid) throw new HttpsError('permission-denied', 'This phone belongs to someone else');
+  if (snap.get('status') === 'revoked') throw new HttpsError('failed-precondition', 'This phone was revoked');
+  const member = await db().collection('mp_users').doc(req.auth.uid).get();
+  if (!member.exists || member.get('status') === 'pending' || member.get('status') === 'disabled') {
+    throw new HttpsError('permission-denied', 'Your account is not active in JASLOW IOT yet');
+  }
+  const secret = randomBytes(24).toString('base64url');
+  await ref.set({echoSecretHash: sha256(secret), echoRegisteredAt: Date.now()}, {merge: true});
+  return {deviceId, secret, deviceName: String(snap.get('deviceName') || ''), deviceNumber: String(snap.get('deviceNumber') || '')};
+});
+
+const clip = (v: unknown, n: number) => (typeof v === 'string' ? v : v === undefined || v === null ? '' : String(v)).slice(0, n);
+
+/** Native listener → dashboard. Body: {deviceId, secret, items: [{key, pkg, app, title, text, postedAt}]} (max 20). */
+export const mpEcho = onRequest({memory: '256MiB', timeoutSeconds: 30, maxInstances: 20}, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ok: false});
+    return;
+  }
+  try {
+    const b = (typeof req.body === 'object' && req.body) || {};
+    const deviceId = clip(b.deviceId, 200);
+    const secret = clip(b.secret, 200);
+    if (!deviceId || !secret || deviceId.includes('/')) {
+      res.status(400).json({ok: false, error: 'missing device'});
+      return;
+    }
+    const ref = db().collection('devices').doc(deviceId);
+    const dev = await ref.get();
+    const hash = String(dev.get('echoSecretHash') || '');
+    const given = sha256(secret);
+    if (!dev.exists || !hash || hash.length !== given.length || !timingSafeEqual(Buffer.from(hash), Buffer.from(given))) {
+      res.status(401).json({ok: false, error: 'unknown device'});
+      return;
+    }
+    if (dev.get('status') === 'revoked') {
+      res.status(410).json({ok: false, error: 'revoked'});
+      return;
+    }
+    // Only phones set up through the app (device registered by the server in mpEchoRegister).
+    if (!dev.get('echoRegisteredAt') || dev.get('source') !== 'jaslow-iot-app' || !dev.get('userId')) {
+      res.status(401).json({ok: false, error: 'unknown device'});
+      return;
+    }
+    // Online check-in (every 5 minutes from the phone's background service, and with every batch of notifications).
+    await markOnline(deviceId, String(dev.get('userId')));
+    // Texting phone: report texts it sent, and pick up the next ones to send.
+    if (Array.isArray(b.smsResults) && b.smsResults.length) await recordSmsResults(deviceId, b.smsResults.slice(0, 50));
+    if (b.ping === true) {
+      await ref.set({lastSeen: Date.now(), lastPingAt: Date.now()}, {merge: true});
+      const sms = b.canSms === true ? await pendingSmsFor(deviceId) : [];
+      res.json({ok: true, ping: true, ...(b.canSms === true ? {sms} : {})});
+      return;
+    }
+    const items = (Array.isArray(b.items) ? b.items : [b]).slice(0, 20);
+    // Simple per-phone rate limit.
+    const minute = Math.floor(Date.now() / 60000);
+    const rateRef = db().collection('mp_meta').doc(`echo_rate_${deviceId}`);
+    const count = await db().runTransaction(async (tx) => {
+      const r = await tx.get(rateRef);
+      const n = r.get('minute') === minute ? Number(r.get('count') || 0) : 0;
+      tx.set(rateRef, {minute, count: n + items.length, expireAt: expireIn(3600_000)});
+      return n + items.length;
+    });
+    if (count > MAX_PER_MINUTE) {
+      res.status(429).json({ok: false, error: 'too many'});
+      return;
+    }
+    const userId = String(dev.get('userId'));
+    const deviceName = String(dev.get('deviceName') || 'Phone');
+    const deviceNumber = String(dev.get('deviceNumber') || '');
+    let created = 0;
+    const saved: Array<{item: Record<string, unknown>; id: string}> = [];
+    const devData = dev.data() || {};
+    for (const it of items) {
+      const title = clip(it.title, 300).trim();
+      const text = clip(it.text, 4000).trim();
+      if (!title && !text) continue;
+      // Missed calls → text-back / lead (never shown on the dashboard).
+      if (await echoBeforeFilter(devData, deviceId, it)) continue;
+      // Dashboard gets Facebook messages / Messenger chats / DMs only (TikTok, Gmail, carrier, likes… are dropped).
+      if (!isFacebookMessage(clip(it.pkg, 120), clip(it.app, 80), title, text, clip(it.cat, 20))) continue;
+      const postedAt = Number(it.postedAt) || Date.now();
+      // Same notification sent twice (retry) → same doc.
+      const id = `echo_${sha256(`${deviceId}|${clip(it.key, 300)}|${postedAt}|${title}|${text}`).slice(0, 32)}`;
+      // create(): a retried batch never resets isHandled or re-runs the lead hooks for the same notification.
+      try {
+        await db().collection('notifications').doc(id).create({
+          targetUserId: userId,
+          sourceDeviceId: deviceId,
+          sourceDeviceName: deviceName,
+          sourceDeviceNumber: deviceNumber,
+          sourceApp: clip(it.app, 80) || clip(it.pkg, 120),
+          sourcePackage: clip(it.pkg, 120),
+          title,
+          text: title && text ? `${title}: ${text}` : title || text,
+          postedAt,
+          isHandled: false,
+          createdAt: FieldValue.serverTimestamp(),
+          expireAt: notificationExpireAt(),
+          source: 'jaslow-iot-echo',
+        });
+      } catch (e) {
+        if ((e as {code?: number}).code === 6) continue; // ALREADY_EXISTS: delivered before
+        throw e;
+      }
+      saved.push({item: it, id});
+      created++;
+    }
+    if (created) {
+      await ref.set({lastSeen: Date.now(), lastEchoAt: Date.now()}, {merge: true});
+      // Facebook buyer messages → leads (only for notifications created just now).
+      for (const x of saved) await echoAfterSave(devData, deviceId, x.item, x.id);
+    }
+    const sms = b.canSms === true ? await pendingSmsFor(deviceId) : [];
+    if (b.canSms === true) {
+      res.json({ok: true, created, skipped: items.length - created, sms});
+      return;
+    }
+    res.json({ok: true, created, skipped: items.length - created});
+  } catch (e) {
+    logger.error('mpEcho failed', e);
+    res.status(500).json({ok: false});
+  }
+});

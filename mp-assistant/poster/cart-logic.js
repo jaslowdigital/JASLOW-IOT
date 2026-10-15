@@ -1,0 +1,487 @@
+var JaslowCartLogic = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+  // src/mp/cartLogic.ts
+  var cartLogic_exports = {};
+  __export(cartLogic_exports, {
+    GOLF_CART_HEADLINE: () => GOLF_CART_HEADLINE,
+    buildTitles: () => buildTitles,
+    cartKind: () => cartKind,
+    cartName: () => cartName,
+    cartTitle: () => cartTitle,
+    defaultImageFiles: () => defaultImageFiles,
+    displayMake: () => displayMake,
+    displayModel: () => displayModel,
+    findAllDmsCartObjects: () => findAllDmsCartObjects,
+    findDmsCartObject: () => findDmsCartObject,
+    generateListing: () => generateListing,
+    generateVariations: () => generateVariations,
+    hasDeleteFlag: () => hasDeleteFlag,
+    hashString: () => hashString,
+    isDmsCartObject: () => isDmsCartObject,
+    isLithium: () => isLithium,
+    isPlaceholder: () => isPlaceholder,
+    isUsedCart: () => isUsedCart,
+    locationCity: () => locationCity,
+    locationName: () => locationName,
+    mapDmsCartObject: () => mapDmsCartObject,
+    modelTitle: () => modelTitle,
+    photoDownloadUrl: () => photoDownloadUrl,
+    photoUrl: () => photoUrl,
+    resolveWarranty: () => resolveWarranty,
+    searchTitles: () => searchTitles,
+    seatLayout: () => seatLayout,
+    seededRandom: () => seededRandom,
+    userSeed: () => userSeed
+  });
+
+  // src/mp/constants.ts
+  // Set these to your inventory photo host and your photo worker (same values as VITE_PHOTO_BASE,
+  // VITE_WINDOW_STICKER_BASE and VITE_PHOTO_WORKER_URL in frontend/.env). See SETUP.md.
+  var PHOTO_BASE = "";
+  var WINDOW_STICKER_BASE = "";
+  var PHOTO_WORKER = "";
+  var ONLINE_WINDOW_MS = 10 * 60 * 1e3;
+  var HEARTBEAT_MS = 5 * 60 * 1e3;
+  // Store list: keep in sync with DEALERSHIPS in frontend/src/mp/constants.ts.
+  var DEALERSHIPS = [
+    { id: "T0", name: "JASLOW IOT", cityState: "", phone: "", address: "", maps: "", facebook: "", youtube: "", website: "https://jaslowiot.com", pinterest: "", review: "" }
+  ];
+  var DEALERSHIP_BY_ID = Object.fromEntries(DEALERSHIPS.map((d) => [d.id, d]));
+  function locationName(id) {
+    const d = DEALERSHIP_BY_ID[id];
+    return d ? d.cityState || d.name : id || "Other";
+  }
+  function locationCity(id) {
+    const d = DEALERSHIP_BY_ID[id];
+    return d?.cityState ? d.cityState.split(",")[0] : "";
+  }
+
+  // src/mp/cartLogic.ts
+  var str = (v) => v === null || v === void 0 ? "" : String(v).trim();
+  var bool = (v) => v === true || v === "true" || v === "Yes" || v === "yes";
+  var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  function isDmsCartObject(v) {
+    const o = obj(v);
+    const hasShape = "cartType" in o || "cartAttributes" in o;
+    return typeof o._id === "string" && (hasShape || "serialNo" in o) || hasShape && !!str(o.serialNo);
+  }
+  function findDmsCartObject(v, depth = 0) {
+    if (depth > 6 || !v || typeof v !== "object") return null;
+    if (isDmsCartObject(v)) return v;
+    const values = Array.isArray(v) ? v : Object.values(v);
+    for (const child of values) {
+      const found = findDmsCartObject(child, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  function findAllDmsCartObjects(v, out = [], depth = 0) {
+    if (depth > 6 || !v || typeof v !== "object") return out;
+    if (isDmsCartObject(v)) {
+      out.push(v);
+      return out;
+    }
+    const values = Array.isArray(v) ? v : Object.values(v);
+    for (const child of values) findAllDmsCartObjects(child, out, depth + 1);
+    return out;
+  }
+  function hasDeleteFlag(doc) {
+    try {
+      return /delete/i.test(JSON.stringify(doc));
+    } catch {
+      return false;
+    }
+  }
+  function parsePassengers(v) {
+    const m = str(v).match(/\d+/);
+    return m ? parseInt(m[0], 10) : 0;
+  }
+  function photoList(doc) {
+    const clean = (a) => (Array.isArray(a) ? a : []).map(str).filter((s) => s && !/^null$/i.test(s));
+    const pub = clean(doc.imageUrls);
+    if (pub.length) return { photos: pub, source: "public" };
+    const internal = clean(doc.internalCartImageUrls);
+    if (internal.length) return { photos: internal, source: "internal" };
+    const defaults = clean(doc._mpDefaultImages);
+    if (defaults.length) return { photos: defaults, source: "default" };
+    return { photos: [], source: "none" };
+  }
+  function isLithium(batteryType) {
+    return /lith|lifepo|li-ion/i.test(batteryType);
+  }
+  function resolveWarranty(doc, isUsed, isElectric) {
+    const batt = obj(doc.battery);
+    const battType = str(batt.type);
+    const lithium = isLithium(battType);
+    const battYear = parseInt(str(batt.year), 10);
+    const newBattery = !!battYear && battYear >= (/* @__PURE__ */ new Date()).getFullYear() - 1;
+    let cart;
+    let battery;
+    if (!isUsed && lithium) {
+      cart = "2 year";
+      battery = "8 year";
+    } else if (!isUsed) {
+      cart = "1 year";
+      battery = "1 year";
+    } else if (isElectric && !lithium && newBattery) {
+      cart = "90 day";
+      battery = "1 year";
+    } else {
+      cart = "90 day";
+      battery = "90 day";
+    }
+    return {
+      cart: str(doc.warrantyLength) || cart,
+      battery: isElectric ? str(batt.warrantyLength) || battery : ""
+    };
+  }
+  function windowStickerUrl(doc) {
+    for (const [k, v] of Object.entries(doc)) {
+      if (!/sticker|monroney/i.test(k)) continue;
+      const file = Array.isArray(v) ? str(v[0]) : str(v);
+      if (file && !/^(null|undefined)$/i.test(file)) return /^https?:\/\//i.test(file) ? file : WINDOW_STICKER_BASE + file;
+    }
+    return "";
+  }
+  function defaultImageFiles(doc, locationSlug, count = 4) {
+    const s = (v) => str(v).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const type = obj(doc.cartType);
+    const stem = [s(obj(doc.cartAttributes).cartColor), s(type.make), s(type.model)].filter(Boolean).join("-");
+    return Array.from({ length: count }, (_, i) => `${stem}-in-${locationSlug}-${i + 1}.jpg`);
+  }
+  function isUsedCart(doc) {
+    if (typeof doc.isUsed === "boolean") return doc.isUsed;
+    if (typeof doc.isNew === "boolean") return !doc.isNew;
+    const cond = str(doc.condition || doc.cartCondition);
+    if (cond) return !/^new/i.test(cond);
+    return true;
+  }
+  function mapDmsCartObject(doc) {
+    const type = obj(doc.cartType);
+    const attrs = obj(doc.cartAttributes);
+    const batt = obj(doc.battery);
+    const engine = obj(doc.engine);
+    const loc = obj(doc.cartLocation);
+    const title = obj(doc.title);
+    const rfs = obj(doc.rfsStatus);
+    const isUsed = isUsedCart(doc);
+    const isElectric = doc.isElectric !== false;
+    const warranty = resolveWarranty(doc, isUsed, isElectric);
+    const { photos, source } = photoList(doc);
+    const price = Number(doc.retailPrice) || 0;
+    return {
+      id: str(doc._id) || str(doc.serialNo),
+      dmsId: str(doc._id) || str(doc.serialNo),
+      make: str(type.make),
+      model: str(type.model),
+      year: str(type.year),
+      color: str(attrs.cartColor),
+      seatColor: str(attrs.seatColor),
+      driveTrain: str(attrs.driveTrain),
+      tireRimSize: str(attrs.tireRimSize),
+      tireType: str(attrs.tireType),
+      hasSoundSystem: bool(attrs.hasSoundSystem),
+      isLifted: bool(attrs.isLifted),
+      hasHitch: bool(attrs.hasHitch),
+      hasExtendedTop: bool(attrs.hasExtendedTop),
+      passengers: parsePassengers(attrs.passengers),
+      isElectric,
+      isUsed,
+      isStreetLegal: bool(title.isStreetLegal),
+      batteryType: str(batt.type),
+      packVoltage: str(batt.packVoltage),
+      batteryBrand: str(batt.brand),
+      batteryYear: str(batt.year),
+      engineMake: str(engine.make),
+      locationId: str(loc.locationId) || str(loc.latestStoreId) || "Other",
+      price,
+      cartWarranty: warranty.cart,
+      batteryWarranty: warranty.battery,
+      serial: str(doc.serialNo),
+      vin: str(doc.vinNo),
+      invoice: str(doc.invoiceNo),
+      status: str(doc.status),
+      isDraft: bool(doc.isDraft),
+      isRFS: bool(rfs.isRFS),
+      photos,
+      photoSource: source,
+      inStock: doc.isInStock !== false,
+      windowSticker: windowStickerUrl(doc),
+      flaggedDelete: hasDeleteFlag(doc)
+    };
+  }
+  function photoUrl(file) {
+    return /^https?:\/\//i.test(file) ? file : PHOTO_BASE + file;
+  }
+  function photoFileName(file) {
+    return file.split("/").pop().split("?")[0];
+  }
+  function photoDownloadUrl(file, downloadName) {
+    if (/^https?:\/\//i.test(file) && !file.startsWith(PHOTO_BASE)) return file;
+    const name = photoFileName(file);
+    const q = new URLSearchParams({ file: name });
+    if (downloadName) q.set("name", downloadName);
+    return `${PHOTO_WORKER}?${q.toString()}`;
+  }
+  function hashString(s) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+  function seededRandom(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = a + 1831565813 >>> 0;
+      let t = a;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  var pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
+  function shuffle(rng, arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+  var cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  function normalizeColor(c) {
+    return c.replace(/\s+/g, " ").trim().toLowerCase();
+  }
+  function isPlaceholder(v) {
+    return /^(other|others|n\/?a|none|unknown|tbd|-+|\.)$/i.test((v || "").trim());
+  }
+  function cartKind(cart) {
+    const parts = [];
+    if (cart.isLifted) parts.push("Lifted");
+    if (cart.passengers) parts.push(`${cart.passengers} Passenger`);
+    if (parts.length) return `${parts.join(" ")} Cart`;
+    if (cart.isStreetLegal) return "Street Legal Golf Cart";
+    if (!cart.isElectric) return "Gas Golf Cart";
+    if (isLithium(cart.batteryType)) return "Lithium Golf Cart";
+    return "Golf Cart";
+  }
+  function displayMake(cart) {
+    return isPlaceholder(cart.make) ? "" : cart.make;
+  }
+  function displayModel(cart) {
+    return isPlaceholder(cart.model) ? cartKind(cart) : cart.model;
+  }
+  function cartName(cart) {
+    return [cart.year, displayMake(cart), displayModel(cart)].filter(Boolean).join(" ") || "Golf Cart";
+  }
+  function cartTitle(cart) {
+    return [displayMake(cart), displayModel(cart), cart.color, locationCity(cart.locationId)].filter(Boolean).join(" ") || cartName(cart);
+  }
+  function formatWarranty(w) {
+    const t = w.trim();
+    if (!t) return "";
+    return /warranty/i.test(t) ? t : `${t} warranty`;
+  }
+  function priceText(p) {
+    return p > 0 ? `$${p.toLocaleString("en-US")}` : "";
+  }
+  function voltage(v) {
+    return v ? v.replace(/\s*v(olt)?s?$/i, "") + "V" : "";
+  }
+  function descriptors(cart) {
+    const d = [];
+    if (cart.isStreetLegal) d.push("street legal");
+    if (cart.isLifted) d.push("lifted");
+    if (cart.passengers) d.push(`${cart.passengers} passenger`);
+    if (!cart.isElectric) d.push("gas");
+    return d;
+  }
+  function equipment(cart) {
+    const e = [];
+    if (cart.isElectric && isLithium(cart.batteryType)) e.push(`a ${voltage(cart.packVoltage)} lithium battery`.replace("a  ", "a "));
+    else if (cart.isElectric && cart.packVoltage) e.push(`a ${voltage(cart.packVoltage)} battery pack`);
+    if (!cart.isElectric && cart.engineMake) e.push(`a ${cart.engineMake} engine`);
+    if (cart.color) e.push(`${normalizeColor(cart.color)} paint${cart.seatColor ? ` with ${normalizeColor(cart.seatColor)} seats` : ""}`);
+    else if (cart.seatColor) e.push(`${normalizeColor(cart.seatColor)} seats`);
+    if (cart.tireRimSize) e.push(`${cart.tireRimSize.replace(/"/g, "")}" wheels${cart.tireType ? ` with ${cart.tireType.toLowerCase()} tires` : ""}`);
+    else if (cart.tireType) e.push(`${cart.tireType.toLowerCase()} tires`);
+    if (cart.hasExtendedTop) e.push("an extended roof");
+    if (cart.hasSoundSystem) e.push("a sound system");
+    if (cart.hasHitch) e.push("a trailer hitch");
+    if (cart.driveTrain && !/^(2wd|2x4)$/i.test(cart.driveTrain)) e.push(cart.driveTrain.toUpperCase());
+    return e;
+  }
+  function features(cart) {
+    const lines = descriptors(cart).map((d) => d === "gas" ? "Gas powered" : cap(d));
+    for (const e of equipment(cart)) lines.push(cap(e.replace(/^(a|an) /, "")));
+    return lines;
+  }
+  function hasNewBattery(cart) {
+    const y = parseInt((cart.batteryYear || "").match(/\d{4}/)?.[0] || "", 10);
+    return cart.isUsed && cart.isElectric && !!y && y >= (/* @__PURE__ */ new Date()).getFullYear() - 1;
+  }
+  var isAllTerrain = (cart) => /all[\s-]?terrain|off[\s-]?road|\bA\/?T\b/i.test(cart.tireType || "");
+  function seatLayout(cart) {
+    const m = (cart.model || "").toLowerCase();
+    if (/\b4\s*\+\s*2\b/.test(m)) return "4+2";
+    if (/\b2\s*\+\s*2\b/.test(m)) return "2+2";
+    if (/\bforward(\s*-?\s*facing)?\b|\bfwd\s*facing\b/.test(m)) return "forward";
+    return "";
+  }
+  var isLeadAcid = (batteryType) => /lead|acid|flooded|agm|trojan|u\.?s\.? battery/i.test(batteryType || "");
+  function searchTitles(cart) {
+    const p = cart.passengers;
+    const lithium = cart.isElectric && isLithium(cart.batteryType);
+    const battery = !cart.isElectric ? "Gas" : hasNewBattery(cart) ? lithium ? "New Lithium Battery" : "New Battery" : lithium ? "Lithium" : isLeadAcid(cart.batteryType) ? "Lead Acid" : "Electric";
+    const layout = seatLayout(cart);
+    const plain = p >= 6 ? `${p} Passenger` : p === 4 ? "4 Seater" : p === 2 ? "2 Seater" : p ? `${p} Passenger` : "";
+    const seats = layout === "2+2" || layout === "4+2" ? layout : layout === "forward" && p ? `Forward Facing ${plain}` : plain;
+    const seatsAlt = layout === "2+2" || layout === "4+2" ? `${layout} Seat` : p >= 5 ? `${p} Seater` : p ? `${p} Passenger` : "";
+    const lsv = cart.isStreetLegal;
+    const style = [cart.isLifted ? "Lifted" : "", isAllTerrain(cart) ? "All Terrain" : ""].filter(Boolean);
+    const isNew = !cart.isUsed;
+    const t = (...parts) => parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    const noun = lsv ? "LSV" : "Golf Cart";
+    const main = style.length >= 2 ? t(isNew ? "New" : "", ...style, seats, noun) : t(isNew ? "New" : "", ...style, battery, seats, noun);
+    const out = [
+      main,
+      t(...style, battery, seatsAlt, lsv ? "Street Legal Golf Cart" : "Cart"),
+      lsv ? t(isNew ? "New" : "", "Street Legal", battery, "Golf Cart") : t(isNew ? "New" : "", battery, seats, "Golf Cart"),
+      style.length ? t(...style, "Golf Cart") : t(battery, "Golf Cart"),
+      t(seats, noun)
+    ];
+    return [...new Set(out.filter((x) => x && x !== noun))];
+  }
+  function modelTitle(cart) {
+    return [displayMake(cart), displayModel(cart)].filter(Boolean).join(" ") || cartKind(cart);
+  }
+  function buildTitles(cart, rng) {
+    const titles = searchTitles(cart);
+    const r = rng();
+    const i = Math.min(titles.length - 1, r < 0.55 ? 0 : r < 0.8 ? 1 : 2);
+    return [titles[i], modelTitle(cart)];
+  }
+  function warrantyLines(cart, rng) {
+    const lines = [];
+    const cw = formatWarranty(cart.cartWarranty);
+    const bw = formatWarranty(cart.batteryWarranty);
+    if (cw) lines.push(pick(rng, [`Comes with a ${cw} on the cart`, `${cap(cw)} on the cart`, `Cart has a ${cw}`]));
+    if (bw) lines.push(pick(rng, [`${cap(bw)} on the battery`, `Battery comes with a ${bw}`, `Battery has a ${bw}`]));
+    return lines;
+  }
+  var GOLF_CART_HEADLINE = "Golf Cart";
+  var FINANCING = [
+    "Financing available",
+    "Financing available, easy approval",
+    "We offer financing",
+    "Financing options available"
+  ];
+  var DELIVERY = [
+    "Delivery available",
+    "We can deliver",
+    "Delivery available for a fee",
+    "Local delivery available"
+  ];
+  var OPENERS_USED = [
+    "This one is in great shape and ready to go.",
+    "Really nice cart, runs and drives great.",
+    "Well taken care of and ready for the season.",
+    "Clean cart, everything works like it should."
+  ];
+  var OPENERS_NEW = [
+    "Brand new and ready to go.",
+    "New cart, fully loaded and ready to ride.",
+    "New in stock, come check it out."
+  ];
+  function listDescription(cart) {
+    const out = [cartName(cart)];
+    const p = priceText(cart.price);
+    if (p) out.push(p);
+    for (const f of features(cart)) out.push(cap(f));
+    return out;
+  }
+  function paragraphDescription(cart, rng) {
+    const name = cartName(cart);
+    const desc = descriptors(cart).filter((d) => !name.toLowerCase().includes(d));
+    const eq = equipment(cart);
+    const sentences = [pick(rng, cart.isUsed ? OPENERS_USED : OPENERS_NEW)];
+    const subject = [...desc, name].join(" ");
+    const article = /^[aeiou8]/i.test(subject) ? "an" : "a";
+    const head = eq.slice(0, 2);
+    const tail = eq.slice(2);
+    sentences.push(
+      head.length ? `${pick(rng, ["It's", "This is", "Up for sale is"])} ${article} ${subject} ${pick(rng, ["with", "that has", "featuring"])} ${joinList(head)}.` : `${pick(rng, ["It's", "This is"])} ${article} ${subject}.`
+    );
+    if (tail.length) sentences.push(`${pick(rng, ["Also has", "It also has", "Comes with"])} ${joinList(tail)}.`);
+    const p = priceText(cart.price);
+    if (p) sentences.push(pick(rng, [`Asking ${p}.`, `Price is ${p}.`, `${p}.`]));
+    return [sentences.join(" ")];
+  }
+  function joinList(items) {
+    if (items.length <= 1) return items.join("");
+    return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+  }
+  function addImperfections(text, rng, count = 3) {
+    const ops = [
+      (s) => s.replace(/, (?=[a-z])/, " "),
+      (s) => s.replace(/ and /, " & "),
+      (s) => s.replace(/([.!]\s+|\n)([A-Z])([a-z])/, (_m, sep, c, r) => `${sep}${c.toLowerCase()}${r}`),
+      (s) => s.replace(/\.(\n|$)/, "$1")
+    ];
+    let out = text;
+    for (const op of shuffle(rng, ops).slice(0, count)) out = op(out);
+    return out;
+  }
+  function generateListing(cart, opts = {}) {
+    const seed = (opts.seed ?? hashString(cart.id)) + (opts.variant ?? 0) * 7919;
+    const rng = seededRandom(seed);
+    const format = opts.format ?? (rng() < 0.5 ? "list" : "paragraph");
+    const [title1, title2] = buildTitles(cart, rng);
+    const body = format === "list" ? listDescription(cart) : paragraphDescription(cart, rng);
+    const tail = [...warrantyLines(cart, rng), pick(rng, FINANCING), pick(rng, DELIVERY)];
+    const main = format === "list" ? [...body, ...tail].join("\n") : `${body.join(" ")}
+
+${tail.join("\n")}`;
+    const loc = locationName(cart.locationId);
+    const locationLine = /,/.test(loc) ? loc : "";
+    let description = `${GOLF_CART_HEADLINE}
+
+${addImperfections(main, rng)}`;
+    if (locationLine) description += `
+
+${locationLine}`;
+    return { title1, title2, description, format };
+  }
+  function userSeed(cartId, userId) {
+    return hashString(`${cartId}::${userId}`);
+  }
+  function generateVariations(cart, userId = "") {
+    const seed = userSeed(cart.id, userId);
+    const rng = seededRandom(seed);
+    const threeParagraph = rng() < 0.5;
+    const formats = threeParagraph ? ["paragraph", "paragraph", "paragraph", "list", "list"] : ["list", "list", "list", "paragraph", "paragraph"];
+    const list = shuffle(rng, formats).map((format, i) => generateListing(cart, { seed, variant: i + 1, format }));
+    if (list[0]) list[0] = { ...list[0], title1: searchTitles(cart)[0] };
+    return list;
+  }
+  return __toCommonJS(cartLogic_exports);
+})();

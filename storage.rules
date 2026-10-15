@@ -1,0 +1,68 @@
+rules_version = '2';
+
+// Only signed-in @jaslowdigital.com users can reach files, except through tokenized
+// download URLs, which storefronts and shares use for listing photos.
+// (No Firestore lookups here, so deploys need no cross-service IAM grant; which files are
+// shown in the brand library is controlled by the manager-only mp_assets collection.)
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Signed-in @jaslowdigital.com account with a verified email (same as firestore.rules).
+    function isValidEmail() {
+      return request.auth != null && request.auth.token.email.matches('.*@jaslowdigital[.]com$') &&
+             request.auth.token.email_verified == true;
+    }
+    // Brand library files: images, fonts and PDFs. Browsers often send no type for font files
+    // (uploaded as application/octet-stream), so those are accepted by file extension.
+    function isBrandAssetFile() {
+      return request.resource.contentType.matches('image/.*') ||
+             request.resource.contentType.matches('font/.*') ||
+             request.resource.contentType.matches('application/(x-)?font-.*') ||
+             request.resource.contentType in ['application/pdf', 'application/vnd.ms-fontobject'] ||
+             (request.resource.contentType in ['application/octet-stream', ''] &&
+              request.resource.name.lower().matches('.*[.](ttf|otf|woff|woff2|eot)$'));
+    }
+    function isImageOrVideo() {
+      return request.resource.contentType.matches('image/.*') || request.resource.contentType.matches('video/.*');
+    }
+
+    // Listing photos and generated media, per user: mp_media/{uid}/...
+    match /mp_media/{uid}/{allPaths=**} {
+      allow read: if isValidEmail();
+      allow create, update: if isValidEmail() && request.auth.uid == uid &&
+                               request.resource.size < 25 * 1024 * 1024 && isImageOrVideo();
+      allow delete: if isValidEmail() && request.auth.uid == uid;
+    }
+
+    // Shared brand library (logos, fonts, photos, PDFs).
+    match /mp_assets/{allPaths=**} {
+      allow read: if isValidEmail();
+      allow create, update: if isValidEmail() && request.resource.size < 50 * 1024 * 1024 && isBrandAssetFile();
+      allow delete: if isValidEmail();
+    }
+
+    // Images uploaded through website forms (written by the whIngest function only; emails and
+    // sheets link to them with tokenized download URLs).
+    match /wh_uploads/{allPaths=**} {
+      allow read: if isValidEmail();
+      allow write: if false;
+    }
+
+    // Walk-around videos per cart (team members upload; listings and quote pages use the download URL).
+    match /mp_videos/{cartId}/{file} {
+      allow read: if isValidEmail();
+      allow create, update: if isValidEmail() && request.resource.size < 200 * 1024 * 1024 &&
+                               request.resource.contentType.matches('video/.*');
+      allow delete: if isValidEmail();
+    }
+
+    // Trade-in photos sent from the public trade-in page (written by the mpSalesPublic function only).
+    match /mp_trade_ins/{allPaths=**} {
+      allow read: if isValidEmail();
+      allow write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

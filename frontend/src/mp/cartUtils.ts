@@ -1,0 +1,231 @@
+import type { Cart, MpAccount, MpCart, MpCartDoc } from './types';
+import { mapDmsCartObject, isDmsCartObject, hasDeleteFlag, isLithium, photoUrl } from './cartLogic';
+import { ACCOUNT_GROUPS, locationName, locationRank } from './constants';
+import { daysOnLot } from './sales/inventory/inventoryUtils';
+
+type Json = Record<string, unknown>;
+
+const EMPTY_CART: Cart = {
+  id: '', dmsId: '', make: '', model: '', year: '', color: '', seatColor: '', driveTrain: '',
+  tireRimSize: '', tireType: '', hasSoundSystem: false, isLifted: false, hasHitch: false,
+  hasExtendedTop: false, passengers: 0, isElectric: true, isUsed: true, isStreetLegal: false,
+  batteryType: '', packVoltage: '', batteryBrand: '', batteryYear: '', engineMake: '',
+  locationId: 'Other', price: 0, cartWarranty: '', batteryWarranty: '', serial: '', vin: '',
+  invoice: '', status: '', isDraft: false, isRFS: false, photos: [], photoSource: 'none',
+  inStock: true, windowSticker: '', flaggedDelete: false,
+};
+
+/** Accepts raw DMS docs as well as the legacy app's payload shapes. */
+function cartFromPayload(payload: unknown): Cart {
+  if (isDmsCartObject(payload)) return mapDmsCartObject(payload as Json);
+  const p = (payload && typeof payload === 'object' ? payload : {}) as Json;
+  for (const key of ['raw', 'doc', 'dmsDoc', 'dms', 'source']) {
+    if (isDmsCartObject(p[key])) return mapDmsCartObject(p[key] as Json);
+  }
+  const mapped = (p.cart && typeof p.cart === 'object' ? p.cart : p) as Partial<Cart>;
+  return { ...EMPTY_CART, ...mapped, photos: Array.isArray(mapped.photos) ? mapped.photos : [], flaggedDelete: hasDeleteFlag(p) };
+}
+
+export function cartFromDoc(docId: string, data: Partial<MpCartDoc>): MpCart {
+  let parsed: unknown = {};
+  try {
+    parsed = typeof data.payload === 'string' ? JSON.parse(data.payload) : data.payload || {};
+  } catch {
+    parsed = {};
+  }
+  const cart = cartFromPayload(parsed);
+  return {
+    ...cart,
+    id: cart.id || docId,
+    dmsId: cart.dmsId || data.dmsId || docId,
+    serial: cart.serial || data.serial || '',
+    locationId: cart.locationId && cart.locationId !== 'Other' ? cart.locationId : data.locationId || cart.locationId,
+    docId,
+    savedAt: Number(data.savedAt) || 0,
+    postedBy: data.postedBy || {},
+    postedAccounts: data.postedAccounts || {},
+    doNotPost: data.doNotPost && typeof data.doNotPost === 'object' ? data.doNotPost : undefined,
+    source: data.source,
+    createdBy: data.createdBy,
+    soldLocally: data.soldLocally === true,
+    stockedAt: Number(data.stockedAt) || Number(data.firstSeenAt) || Number(data.createdAt) || undefined,
+    priceHistory: Array.isArray(data.priceHistory) ? data.priceHistory : undefined,
+    lastPriceDropAt: Number(data.lastPriceDropAt) || undefined,
+    videos: Array.isArray(data.videos) ? data.videos.filter((v) => typeof v === 'string' && v) : undefined,
+    videoUpdatedAt: Number(data.videoUpdatedAt) || undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Posted status
+// ---------------------------------------------------------------------------
+
+export function postedTs(cart: MpCart, userKeys: string[]): number {
+  return Math.max(0, ...userKeys.map((k) => cart.postedBy[k] || 0));
+}
+
+export const isPostedBy = (cart: MpCart, userKeys: string[]) => postedTs(cart, userKeys) > 0;
+
+export const postedAccountCount = (cart: MpCart) => Object.keys(cart.postedAccounts).length;
+
+// ---------------------------------------------------------------------------
+// Sorting
+// ---------------------------------------------------------------------------
+
+export function workingPhotos(cart: Cart, broken: Set<string>): string[] {
+  return cart.photos.filter((p) => !broken.has(photoUrl(p)));
+}
+
+export function hasPhotoIssue(cart: Cart, broken: Set<string>): boolean {
+  return cart.photos.some((p) => broken.has(photoUrl(p)));
+}
+
+/** 3+ photos = 3, 2 = 2, 1 = 1, none / all broken = -1. */
+export function photoRank(cart: Cart, broken: Set<string>): number {
+  const n = workingPhotos(cart, broken).length;
+  if (n >= 3) return 3;
+  return n > 0 ? n : -1;
+}
+
+/** Used first → photo rank → price high to low. */
+export function masterSort<T extends Cart>(carts: T[], broken: Set<string>): T[] {
+  return carts.slice().sort((a, b) => {
+    if (a.isUsed !== b.isUsed) return a.isUsed ? -1 : 1;
+    const pr = photoRank(b, broken) - photoRank(a, broken);
+    if (pr) return pr;
+    return b.price - a.price;
+  });
+}
+
+/** Carts that can be suggested at all: not flagged for deletion in the DMS, not marked "Do not post", with photos. */
+export const canSuggest = (c: MpCart, broken: Set<string>) => !c.flaggedDelete && !c.doNotPost && photoRank(c, broken) > 0;
+
+/**
+ * Meets in the middle between "longest on the lot" and "lowest price": each cart's place in both orders
+ * (0 = first) counts half. Ties go to the cart longer on the lot; carts without a price sort as most expensive.
+ */
+export function blendLotAndPrice(carts: MpCart[], now = Date.now()): MpCart[] {
+  if (carts.length < 2) return carts.slice();
+  const price = (c: MpCart) => (c.price > 0 ? c.price : Infinity);
+  const place = (sorted: MpCart[]) => new Map(sorted.map((c, i) => [c.docId, i / (sorted.length - 1)]));
+  const byAge = place(carts.slice().sort((a, b) => daysOnLot(b, now) - daysOnLot(a, now)));
+  const byPrice = place(carts.slice().sort((a, b) => price(a) - price(b)));
+  const score = (c: MpCart) => (byAge.get(c.docId)! + byPrice.get(c.docId)!) / 2;
+  return carts.slice().sort((a, b) => score(a) - score(b) || daysOnLot(b, now) - daysOnLot(a, now) || price(a) - price(b));
+}
+
+/** One cart from each store in turn (T1, T2, T3, …), then the next round, until every store's list is used. */
+export function roundRobin(stores: Array<[string, MpCart[]]>): MpCart[] {
+  const out: MpCart[] = [];
+  for (let i = 0; stores.some(([, list]) => i < list.length); i++) {
+    for (const [, list] of stores) if (i < list.length) out.push(list[i]);
+  }
+  return out;
+}
+
+/**
+ * Suggested to post, store by store (T1, T2, …): carts with photos not yet posted on the account
+ * (or by me, with no account), each store's list blended by time on the lot and low price.
+ */
+export function suggestedByStore(
+  carts: MpCart[], broken: Set<string>, notPosted: (c: MpCart) => boolean, now = Date.now(),
+): Array<[string, MpCart[]]> {
+  const byLoc = new Map<string, MpCart[]>();
+  for (const c of carts) {
+    if (!canSuggest(c, broken) || !notPosted(c)) continue;
+    byLoc.set(c.locationId, [...(byLoc.get(c.locationId) || []), c]);
+  }
+  return [...byLoc.entries()]
+    .sort((a, b) => locationRank(a[0]) - locationRank(b[0]) || a[0].localeCompare(b[0], undefined, { numeric: true }))
+    .map(([loc, list]) => [loc, blendLotAndPrice(list, now)]);
+}
+
+/** Home queue: unposted by me, has photos, balanced round-robin across stores. */
+export function suggestedQueue(carts: MpCart[], userKeys: string[], broken: Set<string>, max = 60): MpCart[] {
+  const pool = masterSort(
+    carts.filter((c) => canSuggest(c, broken) && !isPostedBy(c, userKeys)),
+    broken,
+  );
+  const byLoc = new Map<string, MpCart[]>();
+  for (const c of pool) {
+    const list = byLoc.get(c.locationId) || [];
+    list.push(c);
+    byLoc.set(c.locationId, list);
+  }
+  const queues = [...byLoc.entries()].sort((a, b) => locationRank(a[0]) - locationRank(b[0])).map(([, l]) => l);
+  // Round-robin within each tier (used / photo rank) so the top of the list stays used + photo-rich.
+  const out: MpCart[] = [];
+  while (out.length < max && queues.some((q) => q.length)) {
+    const heads = queues.filter((q) => q.length).map((q) => q[0]);
+    const best = masterSort(heads, broken)[0];
+    const tier = (c: MpCart) => `${c.isUsed}|${photoRank(c, broken)}`;
+    for (const q of queues) {
+      if (q.length && tier(q[0]) === tier(best) && out.length < max) out.push(q.shift()!);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/** Every fact about a cart as searchable words, including the plain words people type ("lifted", "lsv", "4 seater"). */
+function searchText(cart: Cart): string {
+  const rim = (cart.tireRimSize || '').replace(/["”]|inch(es)?/gi, '').trim();
+  const p = cart.passengers;
+  const lithium = cart.isElectric && isLithium(cart.batteryType);
+  return [
+    cart.make, cart.model, cart.year, cart.color, cart.seatColor && `${cart.seatColor} seats`, cart.serial, cart.vin, cart.dmsId, cart.invoice,
+    cart.locationId, locationName(cart.locationId), cart.status,
+    cart.isUsed ? 'used pre-owned' : 'new brand new',
+    cart.isElectric ? 'electric' : 'gas gasoline',
+    cart.engineMake && `${cart.engineMake} engine`,
+    cart.isElectric && [cart.batteryType, cart.batteryBrand, cart.batteryYear, cart.packVoltage,
+      cart.packVoltage && `${cart.packVoltage.replace(/\s*v(olts?)?$/i, '')}v`,
+      lithium ? 'lithium' : /lead|acid|flooded|agm/i.test(cart.batteryType) ? 'lead acid' : '', 'battery'].join(' '),
+    cart.driveTrain, cart.tireType && `${cart.tireType} tires`,
+    /all[\s-]?terrain|off[\s-]?road|\bA\/?T\b/i.test(cart.tireType || '') ? 'all terrain off road' : '',
+    rim && `${rim}" ${rim} inch wheels rims`,
+    p ? `${p} passenger ${p} seater ${p} seats` : '',
+    cart.isLifted ? 'lifted lift kit' : '',
+    cart.isStreetLegal ? 'street legal lsv' : '',
+    cart.hasSoundSystem ? 'sound system speakers stereo' : '',
+    cart.hasHitch ? 'hitch tow' : '',
+    cart.hasExtendedTop ? 'extended roof extended top' : '',
+    cart.cartWarranty && `warranty ${cart.cartWarranty}`, cart.batteryWarranty && `battery warranty ${cart.batteryWarranty}`,
+    cart.price > 0 ? `$${cart.price} ${cart.price}` : 'no price',
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+/** Every word typed must appear somewhere in the cart's info (make, model, color, engine, battery, wheels, lifted…). */
+export function matchesSearch(cart: Cart, q: string): boolean {
+  const terms = q.toLowerCase().replace(/,/g, ' ').split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const hay = searchText(cart);
+  return terms.every((t) => hay.includes(t));
+}
+
+export function formatPrice(p: number): string {
+  return p > 0 ? `$${p.toLocaleString('en-US')}` : 'No price';
+}
+
+export function timeAgo(ts: number): string {
+  if (!ts) return '';
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+export function groupAccounts(accounts: MpAccount[]): Array<[string, MpAccount[]]> {
+  const groups = new Map<string, MpAccount[]>();
+  for (const g of ACCOUNT_GROUPS) groups.set(g, []);
+  for (const a of accounts) {
+    const g = a.group || 'Other';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g)!.push(a);
+  }
+  return [...groups.entries()].filter(([, list]) => list.length);
+}

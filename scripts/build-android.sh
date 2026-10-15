@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Builds the signed JASLOW IOT Android app (APK) from frontend/ (the web app must already be built into frontend/dist).
+# Usage: scripts/build-android.sh [output.apk]
+#
+# Signing (required — the build FAILS without it; a public APK is never unsigned or debug-signed):
+#   CI:    ANDROID_KEYSTORE_BASE64 + ANDROID_KEYSTORE_PASSWORD (+ optional ANDROID_KEY_ALIAS, default "jaslow")
+#          repository secrets. The keystore is decoded into a temp file that is deleted when the script ends.
+#   Local: JASLOW_KEYSTORE_PATH + JASLOW_STORE_PASSWORD (+ JASLOW_KEY_ALIAS / JASLOW_KEY_PASSWORD).
+#
+# Version code = 3,000,000 + minutes since 2026-01-01 (always increases, so every build installs as an update).
+# Builds before October 2026 used plain minutes (< 3,000,000) and were signed with the OLD key, which was retired
+# because it had been committed to git. Android can't update an app signed with a different key, so phones with an
+# app below MIN_VERSION_CODE must uninstall it once and install the new one (version.json "requiresReinstall").
+set -euo pipefail
+cd "$(dirname "$0")/../frontend"
+
+NEW_KEY_BASE=3000000          # first version code signed with the 2026 key
+MIN_VERSION_CODE=$NEW_KEY_BASE # installed apps below this need a one-time reinstall
+
+export APP_VERSION_CODE="${APP_VERSION_CODE:-$(( NEW_KEY_BASE + ($(date -u +%s) - 1767225600) / 60 ))}"
+export APP_VERSION_NAME="${APP_VERSION_NAME:-3.0.$(( APP_VERSION_CODE - NEW_KEY_BASE ))}"
+if [ "$APP_VERSION_CODE" -lt "$MIN_VERSION_CODE" ]; then
+  echo "::error::APP_VERSION_CODE ($APP_VERSION_CODE) must be >= $MIN_VERSION_CODE (builds signed with the new key)." >&2
+  exit 1
+fi
+
+# --- Release signing key -------------------------------------------------------------------------------------------
+if [ -z "${JASLOW_KEYSTORE_PATH:-}" ] && [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+  KS_TMP="$(mktemp -d)"
+  trap 'rm -rf "$KS_TMP"' EXIT
+  printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KS_TMP/release.keystore"
+  export JASLOW_KEYSTORE_PATH="$KS_TMP/release.keystore"
+  export JASLOW_STORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD:-}"
+  export JASLOW_KEY_ALIAS="${ANDROID_KEY_ALIAS:-jaslow}"
+fi
+if [ -z "${JASLOW_KEYSTORE_PATH:-}" ] || [ ! -s "${JASLOW_KEYSTORE_PATH}" ] || [ -z "${JASLOW_STORE_PASSWORD:-}" ]; then
+  echo "::error::Android release signing key is missing. Add the repository secrets ANDROID_KEYSTORE_BASE64 and" \
+       "ANDROID_KEYSTORE_PASSWORD (and ANDROID_KEY_ALIAS) - see docs/RUNBOOK.md 'Android signing key'." >&2
+  exit 1
+fi
+export JASLOW_KEY_ALIAS="${JASLOW_KEY_ALIAS:-jaslow}"
+# A pasted alias may carry spaces or quotes; when it still isn't in the keystore and the keystore holds one key, use that key.
+JASLOW_KEY_ALIAS="$(printf '%s' "$JASLOW_KEY_ALIAS" | tr -d "\"'\r\n" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+if command -v keytool >/dev/null 2>&1; then
+  KS_ALIASES="$(keytool -list -keystore "$JASLOW_KEYSTORE_PATH" -storepass "$JASLOW_STORE_PASSWORD" 2>/dev/null \
+    | grep -E 'PrivateKeyEntry' | cut -d, -f1 || true)"
+  if [ -n "$KS_ALIASES" ] && ! printf '%s\n' "$KS_ALIASES" | grep -qixF "$JASLOW_KEY_ALIAS"; then
+    if [ "$(printf '%s\n' "$KS_ALIASES" | wc -l)" -eq 1 ]; then
+      echo "::warning::Key alias from ANDROID_KEY_ALIAS isn't in the keystore; using its only key, \"$KS_ALIASES\"." >&2
+      JASLOW_KEY_ALIAS="$KS_ALIASES"
+    else
+      echo "::error::Key alias from ANDROID_KEY_ALIAS isn't in the keystore. Keys in it: $(printf '%s' "$KS_ALIASES" | tr '\n' ' ')" >&2
+      exit 1
+    fi
+  fi
+fi
+export JASLOW_KEY_ALIAS
+
+npx cap sync android
+if [ -n "${GOOGLE_SERVICES_JSON:-}" ]; then
+  printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+fi
+# Maven Central / Google Maven sometimes fail to serve a file for a minute ("Could not find ..."): retry twice.
+for attempt in 1 2 3; do
+  if (cd android && ./gradlew assembleRelease --no-daemon); then break; fi
+  if [ "$attempt" -eq 3 ]; then exit 1; fi
+  echo "::warning::Android build failed (attempt $attempt of 3) - retrying in $((attempt * 45)) s." >&2
+  sleep $((attempt * 45))
+done
+OUT="${1:-android/app/build/outputs/apk/release/jaslow-iot.apk}"
+mkdir -p "$(dirname "$OUT")"
+cp android/app/build/outputs/apk/release/app-release.apk "$OUT"
+echo "Built $OUT (version $APP_VERSION_NAME, code $APP_VERSION_CODE)"
+printf '{"versionCode":%s,"versionName":"%s","builtAt":"%s","url":"/downloads/jaslow-iot.apk","minVersionCode":%s,"requiresReinstall":true}\n' \
+  "$APP_VERSION_CODE" "$APP_VERSION_NAME" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MIN_VERSION_CODE" > "$(dirname "$OUT")/version.json"

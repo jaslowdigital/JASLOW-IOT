@@ -1,0 +1,315 @@
+import React, { useMemo, useState } from 'react';
+import { doc, updateDoc } from 'firebase/firestore';
+import {
+  Alert, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, FormControl, IconButton, InputLabel,
+  MenuItem, Paper, Select, TextField, Typography,
+} from '@mui/material';
+import { Add, Delete, DragIndicator, Edit, HowToReg } from '@mui/icons-material';
+import { db } from '../../config/firebase';
+import { memberStatusOf, type MemberStatus } from '../../auth/useMemberStatus';
+import MpShell from '../components/MpShell';
+import { useMp } from '../MpDataContext';
+import { ACCOUNT_GROUPS, COLLECTIONS, LEGACY_PROJECT_ID, LEGACY_USERS } from '../constants';
+import { importLegacyData } from '../legacyImport';
+import { writeAudit } from '../audit';
+import AuditLogPanel from '../components/AuditLogPanel';
+import { ROLE_LABELS, ROLE_OPTIONS } from '../constants';
+import { timeAgo } from '../cartUtils';
+import type { MpAccount, MpProfile, MpRole } from '../types';
+
+type Draft = Omit<MpAccount, 'id'> & { id?: string };
+/** mp_users doc as read here (status / createdAt aren't on the shared MpProfile type). */
+type Member = MpProfile & { status?: MemberStatus; createdAt?: number };
+
+const MpAccounts: React.FC = () => {
+  const { accounts, saveAccount, deleteAccount, users, setUserRole, userName, carts, deleteCarts, reloadCarts, seedAccounts, profile, syncStatus, syncNow } = useMp();
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overGroup, setOverGroup] = useState<string | null>(null);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const groups = useMemo(() => {
+    const names = [...new Set([...ACCOUNT_GROUPS, ...accounts.map((a) => a.group || 'Other')])];
+    return names.map((g) => [g, accounts.filter((a) => (a.group || 'Other') === g)] as const);
+  }, [accounts]);
+
+  const team = users as Member[];
+  const pending = useMemo(
+    () => team.filter((u) => memberStatusOf(u) === 'pending').sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+    [team],
+  );
+  const members = useMemo(() => team.filter((u) => memberStatusOf(u) !== 'pending'), [team]);
+
+  /** Approve / reject / turn off / turn back on (admins only — see firestore.rules mp_users). */
+  const changeMemberStatus = (u: Member, next: MemberStatus) => {
+    const who = u.name || u.email;
+    const verb = next === 'active'
+      ? (memberStatusOf(u) === 'pending' ? 'approved' : 'turned back on')
+      : (memberStatusOf(u) === 'pending' ? 'rejected' : 'turned off');
+    if (next === 'disabled' && !window.confirm(memberStatusOf(u) === 'pending'
+      ? `Reject ${who}? They won't be able to use JASLOW IOT.`
+      : `Turn off ${who}? They lose access right away. You can turn them back on later.`)) return;
+    const action = next === 'active' ? (memberStatusOf(u) === 'pending' ? 'user.approve' : 'user.enable') : (memberStatusOf(u) === 'pending' ? 'user.reject' : 'user.disable');
+    run('Saving…', async () => {
+      await updateDoc(doc(db, COLLECTIONS.users, u.uid), { status: next, statusBy: profile?.uid || '', statusAt: Date.now() });
+      return `${who} ${verb}.`;
+    }, action);
+  };
+
+  const ownerOptions = useMemo(() => {
+    const opts = users.map((u) => ({ value: u.uid, label: u.name || u.email }));
+    for (const l of LEGACY_USERS) if (!users.some((u) => u.legacyId === l.id)) opts.push({ value: l.id, label: `${l.name} (legacy)` });
+    return opts;
+  }, [users]);
+
+  /** Runs an admin action; when `action` is given, the result is written to the audit log. */
+  const run = async (label: string, fn: () => Promise<string | void>, action?: string) => {
+    setBusy(true);
+    setError('');
+    setStatus(label);
+    try {
+      const msg = await fn();
+      setStatus(msg || 'Done.');
+      if (action) await writeAudit(profile, action, '', msg || label);
+    } catch (e) {
+      console.error(e);
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDrop = (group: string) => {
+    const a = accounts.find((x) => x.id === dragId);
+    setDragId(null);
+    setOverGroup(null);
+    if (a && a.group !== group) run(`Moving ${a.name} to ${group}…`, () => saveAccount({ ...a, group }).then(() => `Moved ${a.name} to ${group}.`), 'account.move');
+  };
+
+  const deleteFlagged = carts.filter((c) => c.flaggedDelete);
+
+  return (
+    <MpShell adminOnly>
+      {status && <Alert severity="info" sx={{ mb: 2 }}>{status}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h5">Facebook accounts ({accounts.length})</Typography>
+        <Button variant="contained" startIcon={<Add />} onClick={() => setDraft({ name: '', group: 'Other', owner: '' })}>Add account</Button>
+      </Box>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Drag an account onto another location to move it.</Typography>
+
+      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', mb: 4 }}>
+        {groups.map(([g, list]) => (
+          <Paper
+            key={g}
+            onDragOver={(e) => { e.preventDefault(); setOverGroup(g); }}
+            onDragLeave={() => setOverGroup((o) => (o === g ? null : o))}
+            onDrop={() => onDrop(g)}
+            sx={{ p: 1.5, outline: overGroup === g ? '2px dashed' : 'none', outlineColor: 'primary.main', minHeight: 80 }}
+          >
+            <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>{g} ({list.length})</Typography>
+            {list.map((a) => (
+              <Box
+                key={a.id}
+                draggable
+                onDragStart={() => setDragId(a.id)}
+                onDragEnd={() => { setDragId(null); setOverGroup(null); }}
+                sx={{ display: 'flex', alignItems: 'center', gap: 0.5, py: 0.25, opacity: dragId === a.id ? 0.4 : 1, cursor: 'grab' }}
+              >
+                <DragIndicator fontSize="small" sx={{ color: 'grey.400' }} />
+                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                  <Typography variant="body2" noWrap>{a.name}</Typography>
+                  {a.owner && <Typography variant="caption" color="text.secondary">{userName(a.owner)}</Typography>}
+                </Box>
+                <IconButton size="small" onClick={() => setDraft({ ...a })} aria-label="Edit"><Edit fontSize="small" /></IconButton>
+                <IconButton
+                  size="small"
+                  aria-label="Delete"
+                  onClick={() => window.confirm(`Delete account "${a.name}"? Posting history on carts is kept.`) && run('Deleting…', () => deleteAccount(a.id).then(() => `Deleted ${a.name}.`), 'account.delete')}
+                >
+                  <Delete fontSize="small" />
+                </IconButton>
+              </Box>
+            ))}
+          </Paper>
+        ))}
+      </Box>
+
+      <Box id="approvals" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
+        <Badge badgeContent={pending.length} color="error" overlap="circular">
+          <HowToReg color={pending.length ? 'primary' : 'disabled'} aria-hidden />
+        </Badge>
+        <Typography variant="h5">Waiting for approval</Typography>
+      </Box>
+      <Paper sx={{ p: 2, mb: 4 }}>
+        {pending.length === 0 ? (
+          <Typography color="text.secondary">Nobody is waiting. New people who sign up show up here for you to approve.</Typography>
+        ) : (
+          <>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              These people signed up and can't use the app until you approve them. Only approve people you know work at JASLOW.
+            </Typography>
+            {pending.map((u) => (
+              <Box key={u.uid} sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.75, flexWrap: 'wrap' }}>
+                <Box sx={{ flexGrow: 1, minWidth: 180 }}>
+                  <Typography sx={{ fontWeight: 600 }}>{u.name || u.email}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {u.email}{u.createdAt ? ` · signed up ${timeAgo(u.createdAt)}` : ''}
+                  </Typography>
+                </Box>
+                <Button size="small" variant="contained" disabled={busy} onClick={() => changeMemberStatus(u, 'active')}>Approve</Button>
+                <Button size="small" color="error" disabled={busy} onClick={() => changeMemberStatus(u, 'disabled')}>Reject</Button>
+              </Box>
+            ))}
+          </>
+        )}
+      </Paper>
+
+      <Typography variant="h5" gutterBottom>Team</Typography>
+      <Paper sx={{ p: 2, mb: 4 }}>
+        {members.map((u) => {
+          const off = memberStatusOf(u) === 'disabled';
+          const self = u.uid === profile?.uid;
+          return (
+            <Box key={u.uid} sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.75, flexWrap: 'wrap', opacity: off ? 0.7 : 1 }}>
+              <Box sx={{ flexGrow: 1, minWidth: 180 }}>
+                <Typography sx={{ fontWeight: 600 }}>
+                  {u.name}
+                  {off && <Chip size="small" label="Turned off" sx={{ ml: 1 }} />}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">{u.email}{u.legacyId ? ` · legacy: ${u.legacyId}` : ''}</Typography>
+              </Box>
+              <Select
+                size="small"
+                value={u.role}
+                disabled={self || off}
+                onChange={(e) => run('Updating role…', () => setUserRole(u.uid, e.target.value as MpRole).then(() => `${u.name} is now ${ROLE_LABELS[e.target.value] || e.target.value}.`), 'user.role')}
+              >
+                {ROLE_OPTIONS.map((o) => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
+              </Select>
+              {!self && (off
+                ? <Button size="small" disabled={busy} onClick={() => changeMemberStatus(u, 'active')}>Turn back on</Button>
+                : <Button size="small" color="error" disabled={busy} onClick={() => changeMemberStatus(u, 'disabled')}>Turn off</Button>)}
+            </Box>
+          );
+        })}
+      </Paper>
+
+      <Typography variant="h5" gutterBottom>Maintenance</Typography>
+      <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Box>
+          <Button
+            variant="contained"
+            disabled={busy}
+            onClick={() =>
+              run('Syncing active inventory from the DMS (production)… this can take a minute.', async () => {
+                const r = await syncNow();
+                return `DMS sync done: ${r.inStock} in stock, ${r.written} updated, ${r.removedSold} sold removed.${r.warning ? ' ' + r.warning : ''}`;
+              }, 'dms.sync')
+            }
+          >
+            Sync from DMS now
+          </Button>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            Inventory syncs automatically once a day (around 4 AM) from the DMS API (active, in-stock carts only; sold carts are removed).
+            {syncStatus?.finishedAt && (
+              <>
+                {' '}Last run {timeAgo(syncStatus.finishedAt)} ({syncStatus.trigger?.startsWith('manual') ? 'manual' : 'scheduled'}):{' '}
+                {syncStatus.ok
+                  ? `${syncStatus.inStock} in stock, ${syncStatus.written} updated, ${syncStatus.removedSold} removed.`
+                  : `failed — ${syncStatus.error}`}
+                {syncStatus.warning ? ` ${syncStatus.warning}` : ''}
+              </>
+            )}
+          </Typography>
+        </Box>
+        <Box>
+          <Button
+            variant="outlined"
+            color="error"
+            disabled={busy || deleteFlagged.length === 0}
+            onClick={() =>
+              window.confirm(`Remove ${deleteFlagged.length} cart(s) with "delete" in their data?`) &&
+              run('Removing…', () => deleteCarts(deleteFlagged.map((c) => c.docId)).then(() => `Removed ${deleteFlagged.length} 'delete' carts.`), 'carts.cleanup')
+            }
+          >
+            Scan & remove 'delete' carts
+          </Button>
+          <Chip size="small" label={`${deleteFlagged.length} found`} sx={{ ml: 1 }} />
+        </Box>
+        {LEGACY_PROJECT_ID && <Box>
+          <Button
+            variant="outlined"
+            disabled={busy}
+            onClick={() =>
+              window.confirm(`Copy all carts, accounts and posting history from the old ${LEGACY_PROJECT_ID} project into JASLOW IOT? Safe to re-run.`) &&
+              run('Importing…', async () => {
+                const msg = await importLegacyData(setStatus);
+                reloadCarts();
+                return msg;
+              }, 'legacy.import')
+            }
+          >
+            Import from legacy MP Assistant
+          </Button>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            One-time migration from the old {LEGACY_PROJECT_ID} project. Existing carts are merged, not duplicated.
+          </Typography>
+        </Box>}
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          <Button variant="outlined" disabled={busy} onClick={() => run('Seeding…', () => seedAccounts().then(() => 'Default accounts restored.'), 'accounts.seed')}>
+            Restore default accounts
+          </Button>
+          <Button variant="outlined" disabled={busy} onClick={() => { reloadCarts(); setStatus('Reloading inventory…'); }}>
+            Reload inventory
+          </Button>
+        </Box>
+      </Paper>
+
+      <Dialog open={!!draft} onClose={() => setDraft(null)} fullWidth maxWidth="xs">
+        <DialogTitle>{draft?.id ? 'Edit account' : 'Add account'}</DialogTitle>
+        {draft && (
+          <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '8px !important' }}>
+            <TextField label="Name" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} autoFocus />
+            <FormControl>
+              <InputLabel>Location</InputLabel>
+              <Select label="Location" value={draft.group} onChange={(e) => setDraft({ ...draft, group: e.target.value })}>
+                {groups.map(([g]) => <MenuItem key={g} value={g}>{g}</MenuItem>)}
+              </Select>
+            </FormControl>
+            <FormControl>
+              <InputLabel>Owner</InputLabel>
+              <Select label="Owner" value={draft.owner} onChange={(e) => setDraft({ ...draft, owner: e.target.value })}>
+                <MenuItem value="">Unassigned</MenuItem>
+                {ownerOptions.map((o) => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
+              </Select>
+            </FormControl>
+          </DialogContent>
+        )}
+        <DialogActions>
+          <Button onClick={() => setDraft(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={!draft?.name.trim()}
+            onClick={() => {
+              const d = draft!;
+              setDraft(null);
+              run('Saving…', () => saveAccount({ ...d, name: d.name.trim() }).then(() => `Saved ${d.name.trim()}.`), d.id ? 'account.edit' : 'account.add');
+            }}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Box sx={{ mt: 4 }}>
+        <AuditLogPanel />
+      </Box>
+    </MpShell>
+  );
+};
+
+export default MpAccounts;

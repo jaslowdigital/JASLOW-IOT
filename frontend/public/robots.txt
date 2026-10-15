@@ -1,0 +1,16 @@
+# Jaslow Digital — public storefront is crawlable; the signed-in dashboard is not.
+User-agent: *
+Allow: /s/
+Disallow: /mp/
+Disallow: /wh/
+Disallow: /api/
+Disallow: /l/
+Disallow: /login
+Disallow: /register
+Disallow: /dashboard
+Disallow: /users
+Disallow: /devices
+Disallow: /settings
+Disallow: /requests
+
+Sitemap: https://jaslowiot.com/sitemap.xml
