@@ -1,0 +1,4 @@
+# First admins of JASLOW IOT (one email per line). Used once by the deploy, only while the project has no admin
+# list yet (Firestore systemConfig/mpAssistant.adminEmails). After that, manage admins in the app.
+# Each address must be a @jaslowdigital.com account that can receive the sign-up verification email.
+info@jaslowdigital.com

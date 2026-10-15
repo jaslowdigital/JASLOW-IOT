@@ -47,26 +47,25 @@ permissions:
   contents: read
 
 env:
-  # Web-app config for the NEW Firebase project and company details (repo Settings → Secrets and variables →
-  # Actions → Variables). These are public web values, not secrets. See SETUP.md.
+  # Optional repo Variables (Settings → Secrets and variables → Actions → Variables). Nothing here is required:
+  # scripts/ci-firebase-setup.sh reads the Firebase web config from the project with the FIREBASE_SERVICE_ACCOUNT secret.
   FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID || 'jaslow-iot' }}
-  VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
-  VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
-  VITE_FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID || 'jaslow-iot' }}
-  VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
-  VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-  VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
-  VITE_FIREBASE_MEASUREMENT_ID: ${{ vars.VITE_FIREBASE_MEASUREMENT_ID }}
-  VITE_PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN || 'https://jaslowiot.com' }}
-  VITE_COMPANY_NAME: ${{ vars.VITE_COMPANY_NAME }}
-  VITE_COMPANY_PHONE: ${{ vars.COMPANY_PHONE }}
-  VITE_COMPANY_WEBSITE: ${{ vars.VITE_COMPANY_WEBSITE }}
-  VITE_SUPPORT_EMAIL: ${{ vars.VITE_SUPPORT_EMAIL }}
-  VITE_DMS_API_BASE: ${{ vars.DMS_API_BASE }}
-  VITE_PHOTO_BASE: ${{ vars.PHOTO_BASE }}
-  VITE_WINDOW_STICKER_BASE: ${{ vars.WINDOW_STICKER_BASE }}
-  VITE_DEFAULT_IMAGE_BASE: ${{ vars.DEFAULT_IMAGE_BASE }}
-  VITE_PHOTO_WORKER_URL: ${{ vars.PHOTO_WORKER_URL }}
+  CFG_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+  CFG_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+  CFG_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
+  CFG_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+  CFG_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+  CFG_FIREBASE_MEASUREMENT_ID: ${{ vars.VITE_FIREBASE_MEASUREMENT_ID }}
+  CFG_PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN || 'https://jaslowiot.com' }}
+  CFG_COMPANY_NAME: ${{ vars.VITE_COMPANY_NAME }}
+  CFG_COMPANY_PHONE: ${{ vars.COMPANY_PHONE }}
+  CFG_COMPANY_WEBSITE: ${{ vars.VITE_COMPANY_WEBSITE }}
+  CFG_SUPPORT_EMAIL: ${{ vars.VITE_SUPPORT_EMAIL }}
+  CFG_DMS_API_BASE: ${{ vars.DMS_API_BASE }}
+  CFG_PHOTO_BASE: ${{ vars.PHOTO_BASE }}
+  CFG_WINDOW_STICKER_BASE: ${{ vars.WINDOW_STICKER_BASE }}
+  CFG_DEFAULT_IMAGE_BASE: ${{ vars.DEFAULT_IMAGE_BASE }}
+  CFG_PHOTO_WORKER_URL: ${{ vars.PHOTO_WORKER_URL }}
 
 concurrency:
   group: mobile-${{ github.event.pull_request.number || github.ref }}
@@ -128,8 +127,13 @@ jobs:
           java-version: 21
 
       - name: Build web app
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           npm ci
+          bash ../scripts/ci-firebase-setup.sh config
           npm run build
 
       - name: Build debug APK (testing only)
@@ -137,6 +141,12 @@ jobs:
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
+          if [ -f "$RUNNER_TEMP/jaslow-android.env" ]; then
+            saved_gs="$GOOGLE_SERVICES_JSON"; saved_ks="${ANDROID_KEYSTORE_BASE64:-}"
+            . "$RUNNER_TEMP/jaslow-android.env"
+            [ -z "$saved_gs" ] || GOOGLE_SERVICES_JSON="$saved_gs"
+            [ -z "$saved_ks" ] || ANDROID_KEYSTORE_BASE64="$saved_ks"
+          fi
           npx cap sync android
           if [ -n "$GOOGLE_SERVICES_JSON" ]; then printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json; fi
           (cd android && ./gradlew assembleDebug --no-daemon)
@@ -152,8 +162,14 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
+          if [ -f "$RUNNER_TEMP/jaslow-android.env" ]; then
+            saved_gs="$GOOGLE_SERVICES_JSON"; saved_ks="${ANDROID_KEYSTORE_BASE64:-}"; saved_pw="${ANDROID_KEYSTORE_PASSWORD:-}"
+            . "$RUNNER_TEMP/jaslow-android.env"
+            [ -z "$saved_gs" ] || GOOGLE_SERVICES_JSON="$saved_gs"
+            [ -z "$saved_ks" ] || { ANDROID_KEYSTORE_BASE64="$saved_ks"; ANDROID_KEYSTORE_PASSWORD="$saved_pw"; }
+          fi
           if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
-            echo "::error::The Android app can't be signed: add the repository secrets ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD (docs/RUNBOOK.md 'Android signing key')."
+            echo "::error::The Android app can't be signed: run a deploy first (it creates the key) or add the repository secrets ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD (docs/RUNBOOK.md 'Android signing key')."
             exit 1
           fi
           if [ -z "$GOOGLE_SERVICES_JSON" ]; then
@@ -187,8 +203,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Build web app
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           npm ci
+          bash ../scripts/ci-firebase-setup.sh config
           npm run build
 
       - name: Sync native project
