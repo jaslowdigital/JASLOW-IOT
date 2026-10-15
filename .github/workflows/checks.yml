@@ -49,7 +49,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -74,7 +74,7 @@ jobs:
         working-directory: functions
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -91,7 +91,7 @@ jobs:
         id: has
         run: |
           if [ -f tests/rules/package.json ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; else echo "No tests/rules yet - skipped."; fi
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: steps.has.outputs.yes == 'true'
         with:
           node-version: 22
@@ -147,7 +147,7 @@ jobs:
         with:
           name: web-dist
           path: dist
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Authenticate to Google Cloud
