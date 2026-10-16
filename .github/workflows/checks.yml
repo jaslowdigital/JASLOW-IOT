@@ -173,7 +173,7 @@ jobs:
           echo "Preview: $URL" >> "$GITHUB_STEP_SUMMARY"
       - name: Comment the preview address on the pull request
         if: steps.deploy.outputs.url != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           URL: ${{ steps.deploy.outputs.url }}
         with:
