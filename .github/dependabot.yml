@@ -12,6 +12,12 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # Newer versions add stricter lint rules (86 new errors in existing code). Kept at the current
+      # version until the code is reworked for them; bump by hand together with those fixes.
+      - dependency-name: "eslint-plugin-react-refresh"
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: "eslint-plugin-react-hooks"
+        update-types: ["version-update:semver-minor"]
     groups:
       frontend-minor-patch:
         update-types: [minor, patch]
