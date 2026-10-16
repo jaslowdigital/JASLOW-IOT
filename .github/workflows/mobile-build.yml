@@ -177,7 +177,7 @@ jobs:
           fi
           ../scripts/build-android.sh android/app/build/outputs/jaslow/jaslow-iot.apk
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.release == true && 'jaslow-iot-android-release' || 'jaslow-iot-android-debug' }}
           path: |
